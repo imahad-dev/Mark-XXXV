@@ -136,6 +136,7 @@ class WakeDetector:
                 model='silero_vad',
                 force_reload=False,
                 onnx=True,
+                trust_repo=True,
             )
             self._vad_model = model
             self._vad_ready = True
@@ -893,7 +894,11 @@ class JarvisLive:
         try:
             while True:
                 chunk = await self.audio_in_queue.get()
-                self.set_speaking(True)
+                # NOTE: Do NOT call set_speaking(True) here.
+                # _receive_audio owns the speaking state via turn_complete.
+                # Setting it here causes a race: if the last audio chunk is
+                # dequeued AFTER turn_complete fires, _is_speaking gets stuck
+                # True and all mic input is silently dropped.
                 await asyncio.to_thread(stream.write, chunk)
         except asyncio.CancelledError:
             print("[JARVIS] 🔊 Play task cancelled — cleaning up audio stream.")
@@ -978,6 +983,9 @@ def main():
     import sys
     from pathlib import Path
 
+    # ── Suppress pywebview internal COM accessibility recursion spam ──────
+    logging.getLogger("pywebview").setLevel(logging.CRITICAL)
+
     # ── 1. Spatially Isolated Subprocess Auth Gate ────────────────────────────
     if os.environ.get("JARVIS_AUTH_CLEARED") != "1":
         gate_script = Path(__file__).resolve().parent / "core" / "auth_gate_runner.py"
@@ -989,18 +997,6 @@ def main():
 
         # Auth passed!
         print("[JARVIS] 🔓 Biometric authentication verified.")
-
-        # ── Force focus to the main process window after auth subprocess closes ──
-        import time as _t
-        _t.sleep(0.3)  # brief pause so Windows registers the subprocess is gone
-        try:
-            import ctypes
-            hwnd = ctypes.windll.kernel32.GetConsoleWindow()
-            if hwnd:
-                ctypes.windll.user32.ShowWindow(hwnd, 9)   # SW_RESTORE
-                ctypes.windll.user32.SetForegroundWindow(hwnd)
-        except Exception:
-            pass
 
         # Read, parse, and instantly destroy boot.env.tmp to protect keys
         boot_env_path = Path(__file__).resolve().parent / "core" / "auth" / "boot.env.tmp"

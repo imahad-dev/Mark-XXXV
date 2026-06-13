@@ -854,11 +854,14 @@ class JarvisUI:
         hud_path = get_base_dir() / "web" / "index.html"
         if hud_path.exists():
             self.window.load_url(hud_path.as_uri())
-            # Switch window from frameless/fullscreen to normal HUD mode
+            time.sleep(0.5)  # let DOM and WebView2 settle
+
+            # Force window to foreground — the on_top toggle is the
+            # pywebview-native way to reclaim focus on Windows.
             try:
-                self.window.toggle_fullscreen()
-                time.sleep(0.3)
-                self.window.toggle_fullscreen()
+                self.window.on_top = True
+                time.sleep(0.1)
+                self.window.on_top = False
             except Exception:
                 pass
         self._auth_event.set()
