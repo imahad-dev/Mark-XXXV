@@ -582,7 +582,6 @@ class JarvisLive:
             input_audio_transcription={},
             system_instruction="\n".join(parts),
             tools=[{"function_declarations": registry.get_declarations()}],
-            session_resumption=types.SessionResumptionConfig(),
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
@@ -991,6 +990,18 @@ def main():
         # Auth passed!
         print("[JARVIS] 🔓 Biometric authentication verified.")
 
+        # ── Force focus to the main process window after auth subprocess closes ──
+        import time as _t
+        _t.sleep(0.3)  # brief pause so Windows registers the subprocess is gone
+        try:
+            import ctypes
+            hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+            if hwnd:
+                ctypes.windll.user32.ShowWindow(hwnd, 9)   # SW_RESTORE
+                ctypes.windll.user32.SetForegroundWindow(hwnd)
+        except Exception:
+            pass
+
         # Read, parse, and instantly destroy boot.env.tmp to protect keys
         boot_env_path = Path(__file__).resolve().parent / "core" / "auth" / "boot.env.tmp"
         if boot_env_path.exists():
@@ -1061,6 +1072,16 @@ def main():
             print(f"[Scheduler] Could not start: {exc}")
         # ── END Background Scheduler ─────────────────────────────────────
 
+        # ── OS-Level Event Bus (Phase 2) ──────────────────────────────────
+        try:
+            from os_layer.event_bus import get_event_bus
+            _event_bus = get_event_bus()
+            _event_bus.start()
+            print("[JARVIS] 📡 Event Bus dispatch active")
+        except Exception as eb_err:
+            print(f"[EventBus] ⚠️ Could not start: {eb_err}")
+        # ── END OS-Level Event Bus ────────────────────────────────────────
+
         # ── OS-Level Screen Intelligence (Phase 1) ───────────────────────
         if config.SCREEN_INTELLIGENCE_ENABLED:
             try:
@@ -1076,17 +1097,6 @@ def main():
             except Exception as si_err:
                 print(f"[ScreenIntel] ⚠️ Could not start: {si_err}")
         # ── END OS-Level Screen Intelligence ──────────────────────────────
-
-        # ── OS-Level Event Bus (Phase 2) ──────────────────────────────────
-        if config.SCREEN_INTELLIGENCE_ENABLED:
-            try:
-                from os_layer.event_bus import get_event_bus
-                _event_bus = get_event_bus()
-                _event_bus.start()
-                print("[JARVIS] 📡 Event Bus dispatch active")
-            except Exception as eb_err:
-                print(f"[EventBus] ⚠️ Could not start: {eb_err}")
-        # ── END OS-Level Event Bus ────────────────────────────────────────
 
         # ── Document Intelligence (Phase 3) ──────────────────────────────
         if getattr(config, "DOC_INTELLIGENCE_ENABLED", False):
@@ -1178,30 +1188,31 @@ def main():
                     print("[JARVIS] 💾 Workspace state saved.")
                 except Exception as ws_err:
                     print(f"[JARVIS] ⚠️ Workspace save failed: {ws_err}")
-            if config.SCREEN_INTELLIGENCE_ENABLED:
+
+            # Actuation first (drains queues and stops running executions)
+            if getattr(config, "ACTUATION_ENABLED", False):
                 try:
-                    from os_layer.screen_intel import get_screen_intelligence
-                    get_screen_intelligence().stop_monitoring()
+                    from os_layer.actuation import get_actuation_manager
+                    get_actuation_manager().stop()
                 except Exception:
                     pass
                 try:
-                    from os_layer.event_bus import get_event_bus
-                    get_event_bus().stop()
+                    from os_layer.browser_bridge import get_browser_bridge
+                    get_browser_bridge().stop()
                 except Exception:
                     pass
-            if getattr(config, "DOC_INTELLIGENCE_ENABLED", False):
                 try:
-                    from os_layer.doc_intelligence import get_doc_intelligence
-                    get_doc_intelligence().stop()
+                    from os_layer.playwright_engine import get_playwright_engine
+                    get_playwright_engine().close()
                 except Exception:
                     pass
-            if getattr(config, "COMMUNICATION_ENABLED", False):
                 try:
-                    from os_layer.communication import get_communication
-                    get_communication().stop()
+                    from os_layer.agentic_shell import get_agentic_shell
+                    get_agentic_shell().stop()
                 except Exception:
                     pass
-            # Phase 5 shutdown (reverse order)
+
+            # Phase 5 shutdown
             if config.PREDICTIVE_ENABLED:
                 try:
                     from os_layer.predictive import get_predictive_engine
@@ -1214,27 +1225,35 @@ def main():
                     get_ambient_mode().stop()
                 except Exception:
                     pass
-            if getattr(config, "ACTUATION_ENABLED", False):
+
+            # Phase 3 shutdown
+            if getattr(config, "COMMUNICATION_ENABLED", False):
                 try:
-                    from os_layer.browser_bridge import get_browser_bridge
-                    get_browser_bridge().stop()
+                    from os_layer.communication import get_communication
+                    get_communication().stop()
                 except Exception:
                     pass
+            if getattr(config, "DOC_INTELLIGENCE_ENABLED", False):
                 try:
-                    from os_layer.agentic_shell import get_agentic_shell
-                    get_agentic_shell().stop()
+                    from os_layer.doc_intelligence import get_doc_intelligence
+                    get_doc_intelligence().stop()
                 except Exception:
                     pass
+
+            # Phase 1 shutdown
+            if config.SCREEN_INTELLIGENCE_ENABLED:
                 try:
-                    from os_layer.playwright_engine import get_playwright_engine
-                    get_playwright_engine().close()
+                    from os_layer.screen_intel import get_screen_intelligence
+                    get_screen_intelligence().stop_monitoring()
                 except Exception:
                     pass
-                try:
-                    from os_layer.actuation import get_actuation_manager
-                    get_actuation_manager().stop()
-                except Exception:
-                    pass
+
+            # EventBus LAST (all other shutdowns emit events here)
+            try:
+                from os_layer.event_bus import get_event_bus
+                get_event_bus().stop()
+            except Exception:
+                pass
 
     threading.Thread(target=runner, daemon=True).start()
     ui.root.mainloop()

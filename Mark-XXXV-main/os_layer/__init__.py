@@ -52,4 +52,7 @@ __all__ = [
     "ambient_mode",
     "predictive",
     "actuation",
+    "agentic_shell",
+    "browser_bridge",
+    "playwright_engine",
 ]
