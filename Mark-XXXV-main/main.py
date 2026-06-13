@@ -986,74 +986,46 @@ def main():
     # ── Suppress pywebview internal COM accessibility recursion spam ──────
     logging.getLogger("pywebview").setLevel(logging.CRITICAL)
 
-    # ── 1. Spatially Isolated Subprocess Auth Gate ────────────────────────────
-    if os.environ.get("JARVIS_AUTH_CLEARED") != "1":
-        gate_script = Path(__file__).resolve().parent / "core" / "auth_gate_runner.py"
-        print("[JARVIS] 🔒 Initializing biometric face authentication gate...")
-        res = subprocess.run([sys.executable, str(gate_script)])
-        if res.returncode != 0:
-            print("[JARVIS] ❌ Authentication denied or window closed. Restricting system access.")
+    # ── 1. Check if auth is already pre-cleared in environment ────────────────
+    if os.environ.get("JARVIS_AUTH_CLEARED") == "1":
+        print("[JARVIS] 🔓 Pre-cleared session detected. Loading config...")
+        config.reload()
+        missing = validate_env()
+        if missing:
+            print(f"[FATAL] Missing required env vars: {missing}")
             sys.exit(1)
-
-        # Auth passed!
-        print("[JARVIS] 🔓 Biometric authentication verified.")
-
-        # Read, parse, and instantly destroy boot.env.tmp to protect keys
-        boot_env_path = Path(__file__).resolve().parent / "core" / "auth" / "boot.env.tmp"
-        if boot_env_path.exists():
-            try:
-                content = boot_env_path.read_text(encoding="utf-8")
-                for line in content.splitlines():
-                    line = line.strip()
-                    if not line or line.startswith("#"):
-                        continue
-                    if "=" in line:
-                        key, val = line.split("=", 1)
-                        key = key.strip()
-                        val = val.strip()
-                        if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
-                            val = val[1:-1]
-                        os.environ[key] = val
-            except Exception as e:
-                print(f"[JARVIS] ERROR parsing temporary secrets: {e}")
-            finally:
-                try:
-                    boot_env_path.unlink(missing_ok=True)
-                except Exception as e:
-                    print(f"[JARVIS] WARNING: Failed to delete boot.env.tmp: {e}")
-
-        # Set cleared flag so that UI and sub-threads skip login screens
-        os.environ["JARVIS_AUTH_CLEARED"] = "1"
-
-    # ── 2. Load Configuration and Validate Decrypted Keys ──────────────────────
-    config.reload()
-
-    missing = validate_env()
-    if missing:
-        print(f"[FATAL] Missing required env vars: {missing}")
-        print("[FATAL] Create a .env file. See .env.example")
-        sys.exit(1)
-    warn_optional()
-
-    # ── 3. Delayed Boot (Delayed heavy initializations) ──────────────────────
-    # One-time migration of existing JSON memory → ChromaDB vectors
-    bootstrap_vector_migration()
-
-    # Start Telegram remote control daemon (if configured)
-    try:
-        from core.telegram_interface import start_telegram_daemon
-        start_telegram_daemon()
-    except Exception as e:
-        print(f"[Telegram] ⚠️ Could not start: {e}")
+        bootstrap_vector_migration()
+        try:
+            from core.telegram_interface import start_telegram_daemon
+            start_telegram_daemon()
+        except Exception as e:
+            print(f"[Telegram] ⚠️ Could not start: {e}")
 
     ui = JarvisUI("face.png")
 
     def runner():
-        # Block until auth gate completes (already cleared by subprocess)
+        # Block until auth gate completes
         ui.wait_for_auth()
         print("[JARVIS] ✅ Auth gate cleared — initializing systems...")
 
+        # If not pre-cleared, reload config now that keys are decrypted and loaded
+        if os.environ.get("JARVIS_AUTH_CLEARED") == "1":
+            config.reload()
+            missing = validate_env()
+            if missing:
+                print(f"[FATAL] System configuration invalid after decryption: {missing}")
+                sys.exit(1)
+            
+            # Run delayed boot tasks that require decrypted env vars
+            bootstrap_vector_migration()
+            try:
+                from core.telegram_interface import start_telegram_daemon
+                start_telegram_daemon()
+            except Exception as e:
+                print(f"[Telegram] ⚠️ Could not start: {e}")
+
         # Load heavy packages now that auth is fully cleared
+
         _lazy_load_heavy_deps()
 
         jarvis = JarvisLive(ui)

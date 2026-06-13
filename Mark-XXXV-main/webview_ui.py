@@ -331,6 +331,56 @@ class Api:
             return video.as_uri()
         return None
 
+    def verify_bypass_pin(self, pin):
+        """Verify bypass PIN and load decrypted env vars directly into memory."""
+        if not pin:
+            return {"success": False, "message": "PIN CANNOT BE EMPTY"}
+        try:
+            import hashlib
+            from core.auth import keystore
+            
+            pin_hash = hashlib.sha256(pin.encode("utf-8")).hexdigest()
+            stored_hash = "c6c805ebecbb05a414e21a221f73752e36780c98f98c851d9bb09e25cc4c23ea"
+            
+            bypass_pin_path = get_base_dir() / "core" / "auth" / "bypass.pin"
+            if bypass_pin_path.exists():
+                stored_hash = bypass_pin_path.read_text(encoding="utf-8").strip()
+                
+            if pin_hash == stored_hash:
+                # Decrypt keys
+                fernet_key = keystore.load_fernet_key()
+                decrypted_content = keystore.decrypt_env_to_memory(fernet_key)
+                
+                # Load decrypted content into os.environ
+                import os
+                for line in decrypted_content.splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip()
+                        if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+                            v = v[1:-1]
+                        os.environ[k] = v
+                
+                # Set cleared flag
+                os.environ["JARVIS_AUTH_CLEARED"] = "1"
+                
+                self.ui._auth_passed = True
+                self.ui._js("onAuthSuccess()")
+                
+                # Transition UI
+                import threading
+                threading.Thread(target=self.ui._auth_transition_to_video, daemon=True).start()
+                return {"success": True}
+            else:
+                return {"success": False, "message": "INVALID BYPASS CREDENTIALS"}
+        except Exception as exc:
+            print(f"[UI] Decryption via PIN failed: {exc}")
+            return {"success": False, "message": f"DECRYPTION ERROR: {str(exc)}"}
+
     def submit_command(self, text):
         self.collector.command_count += 1
         if self.ui.on_text_command:
@@ -670,65 +720,87 @@ class JarvisUI:
         threading.Thread(target=self._run_auth_flow, daemon=True).start()
 
     def _run_auth_flow(self):
-        """Phase 1: Hand scan → Phase 2: Video → navigate to HUD."""
+        """Phase 1: YuNet+ArcFace scan → Phase 2: Video → navigate to HUD."""
         import sys as _sys
         time.sleep(0.4)   # let DOM settle
         self._js("startAuthScreen()")
 
         # Import auth constants from the gate module
         from core.auth_gate_runner import (
-            MAX_ATTEMPTS, ATTEMPT_TIMEOUT, VERIFY_FRAMES,
-            ACCEPTED_HAND, SWAP_HANDEDNESS, FRAME_W, FRAME_H,
-            JPEG_QUALITY, TARGET_FPS, _find_model,
+            MAX_ATTEMPTS, ATTEMPT_TIMEOUT, YAW_PHASE_TIMEOUT,
+            STABLE_MATCH_FRAMES, STABLE_LIVENESS_FRAMES,
+            FRAME_W, FRAME_H, JPEG_QUALITY, TARGET_FPS,
+            GOLDEN_SIG_PATH, FaceEngine
         )
 
-        # ── Try to import vision dependencies ─────────────────────────
         try:
             import cv2
         except ImportError:
             self._auth_hardware_skip("VISION MODULE UNAVAILABLE")
             return
 
-        try:
-            import mediapipe as mp
-            from mediapipe.tasks.python import vision as mp_vision
-            from mediapipe.tasks.python.core import base_options as mp_base
-            from mediapipe import ImageFormat
-        except ImportError:
-            self._auth_hardware_skip("BIOMETRIC MODULE UNAVAILABLE")
+        # Load golden signature
+        import numpy as np
+        golden_sig = None
+        if GOLDEN_SIG_PATH.exists():
+            try:
+                golden_sig = np.load(str(GOLDEN_SIG_PATH))
+            except Exception as exc:
+                print(f"[UI] ERROR: Failed to load golden signature: {exc}")
+
+        if golden_sig is None:
+            self._auth_hardware_skip("NO ENROLLED IDENTITY FOUND")
             return
 
-        model_path = _find_model()
-        if model_path is None:
-            self._auth_hardware_skip("BIOMETRIC MODEL NOT FOUND")
+        # Initialize ONNX FaceEngine models
+        face_engine = FaceEngine()
+        if not face_engine.initialize():
+            self._auth_hardware_skip("BIOMETRIC MODELS LOAD FAILED")
             return
 
-        # ── Open camera ───────────────────────────────────────────────
-        backend = cv2.CAP_DSHOW if _sys.platform == "win32" else cv2.CAP_ANY
-        cap = cv2.VideoCapture(0, backend)
-        if not cap.isOpened():
-            cap = cv2.VideoCapture(0)
-        if not cap.isOpened():
-            self._auth_hardware_skip("SENSOR OFFLINE")
+        # ── 5-Second Camera Initialization Retry Loop ─────────────────────
+        cap = None
+        start_cam_init = time.time()
+        camera_acquired = False
+        
+        while time.time() - start_cam_init < 5.0:
+            if not self._window_alive:
+                break
+            
+            # Try loading camera device
+            backend = cv2.CAP_DSHOW if _sys.platform == "win32" else cv2.CAP_ANY
+            cap = cv2.VideoCapture(0, backend)
+            if not cap.isOpened():
+                cap = cv2.VideoCapture(0)  # fallback
+            
+            if cap.isOpened():
+                # Set ideal resolution properties
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                cap.set(cv2.CAP_PROP_FPS, 30)
+                
+                # Verify we can grab a frame successfully
+                ret, _ = cap.read()
+                if ret:
+                    camera_acquired = True
+                    break
+                else:
+                    cap.release()
+            
+            # Update retry loop timer remaining
+            elapsed = time.time() - start_cam_init
+            remaining = max(0, 5 - int(elapsed))
+            self._js(f"updateCameraRetryTimer({remaining})")
+            time.sleep(0.5)
+
+        # If camera could not be opened, enter secure keyboard-only bypass mode
+        if not camera_acquired:
+            print("[UI] ERROR: Camera sensor occupied or blocked. Triggering secure bypass.")
+            self._js("showCameraErrorOverlay()")
+            face_engine.shutdown()
             return
 
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        cap.set(cv2.CAP_PROP_FPS, 30)
-
-        # ── Build MediaPipe detector ──────────────────────────────────
-        base_opts = mp_base.BaseOptions(model_asset_path=str(model_path))
-        detector = mp_vision.HandLandmarker.create_from_options(
-            mp_vision.HandLandmarkerOptions(
-                base_options=base_opts,
-                num_hands=1,
-                min_hand_detection_confidence=0.6,
-                min_hand_presence_confidence=0.6,
-                min_tracking_confidence=0.5,
-            )
-        )
-
-        # ── Auth loop ─────────────────────────────────────────────────
+        # ── Execute 3-Attempt Biometric Pipeline ──────────────────────────
         auth_success = False
         try:
             for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -737,9 +809,9 @@ class JarvisUI:
 
                 self._js(f"onAuthAttempt({attempt}, {MAX_ATTEMPTS})")
                 verified = self._auth_single_attempt(
-                    cap, detector, mp, ImageFormat,
-                    ATTEMPT_TIMEOUT, VERIFY_FRAMES,
-                    ACCEPTED_HAND, SWAP_HANDEDNESS,
+                    cap, face_engine, golden_sig,
+                    ATTEMPT_TIMEOUT, YAW_PHASE_TIMEOUT,
+                    STABLE_MATCH_FRAMES, STABLE_LIVENESS_FRAMES,
                     FRAME_W, FRAME_H, JPEG_QUALITY, TARGET_FPS,
                 )
 
@@ -749,37 +821,81 @@ class JarvisUI:
 
                 if attempt < MAX_ATTEMPTS:
                     self._js(f"onAttemptFailed({attempt})")
-                    time.sleep(2)
+                    time.sleep(2.0)
         finally:
             cap.release()
-            detector.close()
+            face_engine.shutdown()
 
-        # ── Result ────────────────────────────────────────────────────
+        # ── Handle Authentication Outcome ─────────────────────────────────
         if auth_success:
-            self._auth_passed = True
-            self._js("onAuthSuccess()")
-            time.sleep(1.5)
-            self._auth_transition_to_video()
+            try:
+                # Decrypt keys and load to os.environ
+                from core.auth import keystore
+                fernet_key = keystore.load_fernet_key()
+                decrypted_content = keystore.decrypt_env_to_memory(fernet_key)
+                
+                # Load decrypted content into os.environ
+                for line in decrypted_content.splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip()
+                        if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+                            v = v[1:-1]
+                        os.environ[k] = v
+                
+                # Set cleared flag so that UI and sub-threads skip login screens
+                os.environ["JARVIS_AUTH_CLEARED"] = "1"
+                
+                self._auth_passed = True
+                self._js("onAuthSuccess()")
+                time.sleep(1.5)
+                self._auth_transition_to_video()
+            except Exception as exc:
+                print(f"[UI] Biometric keystore decryption failure: {exc}")
+                self._auth_passed = False
+                self._js("onAuthFailed()")
+                time.sleep(3.0)
+                self.destroy()
         else:
             self._auth_passed = False
             self._js("onAuthFailed()")
-            time.sleep(3)
+            time.sleep(3.0)
             self.destroy()
 
     def _auth_single_attempt(
-        self, cap, detector, mp, ImageFormat,
-        timeout, verify_frames, accepted_hand, swap_hand,
+        self, cap, face_engine, golden_sig,
+        timeout, yaw_phase_timeout, stable_match_frames, stable_liveness_frames,
         frame_w, frame_h, jpeg_quality, target_fps,
     ) -> bool:
-        """Run one scan attempt. Returns True if hand verified."""
+        """Run one scan attempt. Returns True if face matches and liveness checks pass."""
         import cv2
         import base64
+        import random
 
-        stable_count = 0
-        start = time.time()
         frame_interval = 1.0 / target_fps
+        
+        # Challenge 1: Face Match states
+        match_stable = 0
+        
+        # Challenge 2: Head Turn states
+        turn_stable = 0
+        liveness_target = random.choice(["Left", "Right"])
+        turn_timer_started = False
+        turn_start_time = 0.0
+        
+        # Challenge 3: Center states
+        center_stable = 0
+        center_timer_started = False
+        center_start_time = 0.0
 
-        while (time.time() - start < timeout) and self._window_alive:
+        current_phase = 1  # 1 = Face Match, 2 = Liveness Turn, 3 = Center Return
+        attempt_start = time.time()
+
+        while (time.time() - attempt_start < timeout) and self._window_alive:
             loop_start = time.time()
 
             ret, frame = cap.read()
@@ -787,52 +903,128 @@ class JarvisUI:
                 time.sleep(0.02)
                 continue
 
+            # Mirror frame for natural interaction display
             frame = cv2.flip(frame, 1)
 
-            # Stream frame to HTML
+            # Detect faces
+            faces = face_engine.detect_faces(frame)
+            face_detected = len(faces) > 0
+            
+            # Bounding box & crop landmarks
+            face = None
+            ratio = 0.5
+            similarity = 0.0
+            
+            if face_detected:
+                face = max(faces, key=lambda f: f[2] * f[3])
+                if len(face) >= 10:
+                    left_eye_x = face[6]
+                    right_eye_x = face[4]
+                    nose_x = face[8]
+                    
+                    min_eye = min(left_eye_x, right_eye_x)
+                    max_eye = max(left_eye_x, right_eye_x)
+                    span = max_eye - min_eye
+                    if span > 0:
+                        ratio = (nose_x - min_eye) / span
+
+            # Stream Camera Frame to pywebview
             small = cv2.resize(frame, (frame_w, frame_h))
-            _, buf = cv2.imencode(
-                ".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality]
-            )
+            _, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
             b64 = base64.b64encode(buf).decode("ascii")
             self._js(f"updateCameraFeed('data:image/jpeg;base64,{b64}')")
 
-            # MediaPipe detection
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            mp_img = mp.Image(image_format=ImageFormat.SRGB, data=rgb)
-            det = detector.detect(mp_img)
-
-            if det.hand_landmarks:
-                raw_label = det.handedness[0][0].category_name
-                label = (
-                    ("Right" if raw_label == "Left" else "Left")
-                    if swap_hand else raw_label
-                )
-                conf = int(det.handedness[0][0].score * 100)
-
-                if label == accepted_hand:
-                    stable_count += 1
-                    progress = min(
-                        100, int((stable_count / verify_frames) * 100)
-                    )
-                    self._js(
-                        f"onScanProgress({progress}, '{label}', {conf})"
-                    )
-                    if stable_count >= verify_frames:
-                        return True
+            # Phase 1: Face Similarity Match
+            if current_phase == 1:
+                self._js("setLivenessGaugeVisible(false)")
+                if face_detected and face is not None:
+                    emb = face_engine.extract_embedding(frame, face)
+                    if emb is not None:
+                        similarity = face_engine.compute_similarity(emb, golden_sig)
+                        if similarity >= 0.45:
+                            match_stable += 1
+                            progress = min(40, int((match_stable / stable_match_frames) * 40))
+                            self._js(f"onScanProgress({progress}, 'FACE MATCH', {int(similarity * 100)})")
+                            
+                            if match_stable >= stable_match_frames:
+                                current_phase = 2
+                                self._js(f"onLivenessChallenge('{liveness_target}')")
+                        else:
+                            match_stable = max(0, match_stable - 1)
+                            progress = min(40, int((match_stable / stable_match_frames) * 40))
+                            self._js(f"onWrongHand('MISMATCH', {progress})")
+                    else:
+                        match_stable = max(0, match_stable - 1)
+                        progress = min(40, int((match_stable / stable_match_frames) * 40))
+                        self._js(f"onNoHand({progress})")
                 else:
-                    stable_count = max(0, stable_count - 2)
-                    progress = max(
-                        0, int((stable_count / verify_frames) * 100)
-                    )
-                    self._js(f"onWrongHand('{label}', {progress})")
-            else:
-                stable_count = max(0, stable_count - 1)
-                progress = max(
-                    0, int((stable_count / verify_frames) * 100)
-                )
-                self._js(f"onNoHand({progress})")
+                    match_stable = max(0, match_stable - 1)
+                    progress = min(40, int((match_stable / stable_match_frames) * 40))
+                    self._js(f"onNoHand({progress})")
 
+            # Phase 2: Head-Yaw Turn (Left/Right)
+            elif current_phase == 2:
+                self._js("setLivenessGaugeVisible(true)")
+                if not turn_timer_started:
+                    turn_start_time = time.time()
+                    turn_timer_started = True
+
+                if time.time() - turn_start_time > yaw_phase_timeout:
+                    print("[UI] Liveness Turn challenge timed out.")
+                    return False
+
+                if face_detected and face is not None:
+                    self._js(f"onLivenessUpdate({ratio}, {40 + int((turn_stable / stable_liveness_frames) * 40)})")
+                    
+                    passed_frame = False
+                    if liveness_target == "Left" and ratio < 0.35:
+                        passed_frame = True
+                    elif liveness_target == "Right" and ratio > 0.65:
+                        passed_frame = True
+
+                    if passed_frame:
+                        turn_stable += 1
+                        progress = min(80, 40 + int((turn_stable / stable_liveness_frames) * 40))
+                        self._js(f"onScanProgress({progress}, 'LIVENESS TURN', 100)")
+                        
+                        if turn_stable >= stable_liveness_frames:
+                            current_phase = 3
+                            self._js("onLivenessChallenge('Center')")
+                    else:
+                        turn_stable = max(0, turn_stable - 1)
+                else:
+                    turn_stable = max(0, turn_stable - 1)
+                    self._js(f"onNoHand({40 + int((turn_stable / stable_liveness_frames) * 40)})")
+
+            # Phase 3: Return to Center
+            elif current_phase == 3:
+                self._js("setLivenessGaugeVisible(true)")
+                if not center_timer_started:
+                    center_start_time = time.time()
+                    center_timer_started = True
+
+                if time.time() - center_start_time > yaw_phase_timeout:
+                    print("[UI] Return to Center challenge timed out.")
+                    return False
+
+                if face_detected and face is not None:
+                    self._js(f"onLivenessUpdate({ratio}, {80 + int((center_stable / stable_liveness_frames) * 20)})")
+                    
+                    if 0.45 <= ratio <= 0.55:
+                        center_stable += 1
+                        progress = min(100, 80 + int((center_stable / stable_liveness_frames) * 20))
+                        self._js(f"onScanProgress({progress}, 'CENTER ALIGN', 100)")
+                        
+                        if center_stable >= stable_liveness_frames:
+                            self._js("setLivenessGaugeVisible(false)")
+                            return True
+                    else:
+                        center_stable = max(0, center_stable - 1)
+                else:
+                    center_stable = max(0, center_stable - 1)
+                    self._js(f"onNoHand({80 + int((center_stable / stable_liveness_frames) * 20)})")
+
+            # FPS Limiter
             elapsed = time.time() - loop_start
             if elapsed < frame_interval:
                 time.sleep(frame_interval - elapsed)
@@ -868,7 +1060,28 @@ class JarvisUI:
 
     def _auth_hardware_skip(self, message: str):
         """Tier 1 — show amber warning for 3s, then continue."""
+        print(f"[UI] Hardware bypass active: {message}")
         self._js(f"onHardwareError('{message}')")
+        
+        # Best-effort decryption of keys on hardware failure
+        try:
+            from core.auth import keystore
+            fernet_key = keystore.load_fernet_key()
+            decrypted_content = keystore.decrypt_env_to_memory(fernet_key)
+            for line in decrypted_content.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip()
+                    if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+                        v = v[1:-1]
+                    os.environ[k] = v
+        except Exception as exc:
+            print(f"[UI] Best-effort keystore load during hardware skip failed: {exc}")
+
         self._auth_passed = True
         time.sleep(3)
         self._auth_transition_to_video()
