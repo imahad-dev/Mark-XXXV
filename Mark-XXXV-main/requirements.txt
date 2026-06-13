@@ -34,3 +34,5 @@ feedparser
 httpx
 wolframalpha
 websockets
+pytesseract
+WMI
