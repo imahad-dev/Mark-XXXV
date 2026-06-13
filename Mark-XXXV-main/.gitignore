@@ -1,0 +1,22 @@
+.env
+config/api_keys.json
+__pycache__/
+*.pyc
+
+# ChromaDB local vector store (large binary files, user-specific)
+memory/chroma_db/
+
+# Migration flag
+memory/.vector_migrated
+
+# Vosk model (downloaded at runtime)
+core/vosk_model/
+
+# Biometric auth artifacts (NEVER commit these)
+core/auth/golden_signature.npy
+core/auth/master.key
+core/auth/recovery/
+core/auth/models/
+.env.encrypted
+.env.backup
+core/auth/boot.env.tmp

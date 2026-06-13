@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>J.A.R.V.I.S. - MARK XXXV</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body data-theme="jarvis">
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- HUD FRAME — Neon border enclosing the entire viewport         -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div class="hud-frame">
+
+        <!-- Scan Line Effect -->
+        <div class="hud-scanline"></div>
+
+        <!-- Top Ticker Bar -->
+        <div class="hud-ticker-top">
+            <div class="ticker-content" id="ticker-top-content">
+                <span>MARK_XXXV_HUD CREATED WITH GEMINI AI // 2026 //</span>
+                <span>A.L.G.O.R.I.T.H.M /// THE HUD IS HERE ///</span>
+                <span>PROJECT MODE: ACTIVE // SYSTEM NOMINAL //</span>
+                <span>MARK_XXXV_HUD CREATED WITH GEMINI AI // 2026 //</span>
+                <span>A.L.G.O.R.I.T.H.M /// THE HUD IS HERE ///</span>
+            </div>
+        </div>
+
+        <!-- Top Navigation Bar -->
+        <header class="top-nav">
+            <div class="logo" id="logo-text">J.A.R.V.I.S.</div>
+            <div class="theme-switcher">
+                <button class="theme-btn active" data-theme="jarvis">JARVIS</button>
+                <button class="theme-btn" data-theme="friday">FRIDAY</button>
+                <button class="theme-btn" data-theme="ultron">ULTRON</button>
+            </div>
+            <nav class="nav-links">
+                <a href="#" class="active" data-page="home">HOME</a>
+                <a href="#" data-page="dashboard">DASHBOARD</a>
+                <a href="#" data-page="settings">SETTINGS</a>
+            </nav>
+        </header>
+
+        <!-- ══════════════════════════════════════════════════════════ -->
+        <!-- PAGE: HOME — Cinematic 2.5D HUD Layout                   -->
+        <!-- ══════════════════════════════════════════════════════════ -->
+        <div id="page-home" class="page active">
+            <main class="hud-body">
+
+                <!-- ─── LEFT COLUMN ──────────────────────────────── -->
+                <aside class="hud-left">
+
+                    <!-- Globe Widget (2D Canvas dot-matrix) -->
+                    <div class="hud-panel hud-globe-panel">
+                        <canvas id="hud-globe-canvas" width="200" height="200"></canvas>
+                        <div class="hud-panel-label">
+                            <span class="hud-label-tag">EARTH_H33</span>
+                            <span class="hud-label-status">HUD ACTIVATED</span>
+                        </div>
+                    </div>
+
+                    <!-- Status Badges -->
+                    <div class="hud-panel hud-status-panel">
+                        <div class="hud-badge">
+                            <span class="hud-badge-id" id="city-name">LOCATING...</span>
+                            <span class="hud-badge-state completed" id="jarvis-status">LISTENING</span>
+                        </div>
+                        <div class="hud-badge">
+                            <span class="hud-badge-id" id="region-text">—</span>
+                            <span class="hud-badge-state completed">COMPLETED</span>
+                        </div>
+                        <div class="hud-badge">
+                            <span class="hud-badge-id" id="coords-display">LAT: —° LNG: —°</span>
+                            <span class="hud-badge-state completed">COMPLETED</span>
+                        </div>
+                    </div>
+
+                    <!-- System Status (Battery/Network/Connection/Bluetooth) -->
+                    <div class="hud-panel hud-sys-status-panel">
+                        <div class="hud-panel-header">SYSTEM STATUS</div>
+                        <div class="hud-status-grid">
+                            <div class="hud-status-item">
+                                <span class="hud-status-icon">⚡</span>
+                                <div>
+                                    <div class="hud-status-label">BATTERY</div>
+                                    <div class="hud-status-value" id="battery-value">—%</div>
+                                </div>
+                            </div>
+                            <div class="hud-status-item">
+                                <span class="hud-status-icon">🌐</span>
+                                <div>
+                                    <div class="hud-status-label">NETWORK</div>
+                                    <div class="hud-status-value" id="network-value">CHECKING...</div>
+                                </div>
+                            </div>
+                            <div class="hud-status-item">
+                                <span class="hud-status-icon">📡</span>
+                                <div>
+                                    <div class="hud-status-label">CONNECTION</div>
+                                    <div class="hud-status-value" id="connection-value">—</div>
+                                </div>
+                            </div>
+                            <div class="hud-status-item">
+                                <span class="hud-status-icon">🔵</span>
+                                <div>
+                                    <div class="hud-status-label">BLUETOOTH</div>
+                                    <div class="hud-status-value" id="bluetooth-value">CHECKING...</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Bar Chart (CPU/RAM/DISK/NET) -->
+                    <div class="hud-panel hud-barchart-panel">
+                        <div class="hud-barchart">
+                            <div class="hud-bar-col">
+                                <div class="hud-bar" id="hud-bar-cpu"><div class="hud-bar-fill"></div></div>
+                                <span class="hud-bar-label" id="cpu-value">—%</span>
+                            </div>
+                            <div class="hud-bar-col">
+                                <div class="hud-bar" id="hud-bar-ram"><div class="hud-bar-fill"></div></div>
+                                <span class="hud-bar-label" id="ram-value">—%</span>
+                            </div>
+                            <div class="hud-bar-col">
+                                <div class="hud-bar" id="hud-bar-disk"><div class="hud-bar-fill"></div></div>
+                                <span class="hud-bar-label" id="disk-value">—%</span>
+                            </div>
+                            <div class="hud-bar-col">
+                                <div class="hud-bar" id="hud-bar-net"><div class="hud-bar-fill"></div></div>
+                                <span class="hud-bar-label" id="net-label">NET</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Intelligence Router -->
+                    <div class="hud-panel hud-intel-panel">
+                        <div class="hud-panel-header"><span class="hud-dot"></span> INTELLIGENCE ROUTER</div>
+                        <div class="hud-intel-grid">
+                            <div class="hud-intel-pct" id="intel-local-pct">—%</div>
+                            <div class="hud-intel-label">LOCAL</div>
+                            <div class="hud-intel-row">
+                                <span class="hud-intel-key">COST</span>
+                                <span class="hud-intel-val" id="intel-cost">$0.00</span>
+                            </div>
+                            <div class="hud-intel-row">
+                                <span class="hud-intel-key">SAVED</span>
+                                <span class="hud-intel-val saved" id="intel-saved">$0.00</span>
+                            </div>
+                            <div class="hud-intel-row">
+                                <span class="hud-intel-key">QUERIES</span>
+                                <span class="hud-intel-val" id="intel-queries">0</span>
+                            </div>
+                            <div class="hud-intel-row">
+                                <span class="hud-intel-key">TOP SRC</span>
+                                <span class="hud-intel-val" id="intel-top-src">—</span>
+                            </div>
+                        </div>
+                    </div>
+
+                </aside>
+
+                <!-- ─── CENTER COLUMN ────────────────────────────── -->
+                <section class="hud-center">
+
+                    <!-- Concentric Rotating Rings (Three.js) -->
+                    <div id="orb-container" class="hud-ring-container"></div>
+
+                    <!-- Greeting / Clock -->
+                    <div class="hud-greeting-box">
+                        <div class="hud-clock" id="clock-display">00:00<span class="seconds">:00</span></div>
+                        <div class="hud-date" id="date-display">—</div>
+                        <h2 class="hud-greeting" id="greeting-text">Good Evening, Sir</h2>
+                        <p class="hud-subgreeting" id="sub-greeting">Standing by for instructions.</p>
+                        <div class="hud-signature" id="signature-text">- J . A . R . V . I . S .</div>
+                    </div>
+
+                    <!-- File Drop Zone (New) -->
+                    <div class="hud-file-drop" id="file-drop-zone">
+                        <div class="hud-file-drop-icon">📂</div>
+                        <div class="hud-file-drop-text">DROP FILES TO ANALYZE</div>
+                        <div class="hud-file-drop-sub">PDF, images, code — up to 25MB</div>
+                        <input type="file" id="file-input-hidden" style="display:none" multiple>
+                    </div>
+
+                </section>
+
+                <!-- ─── RIGHT COLUMN ─────────────────────────────── -->
+                <aside class="hud-right">
+
+                    <!-- 3D Wireframe Grid (Three.js secondary renderer) -->
+                    <div class="hud-panel hud-wireframe-panel">
+                        <div id="hud-wireframe-container"></div>
+                    </div>
+
+                    <!-- Data Readout (scrolling monospace text) -->
+                    <div class="hud-panel hud-data-readout" id="hud-data-readout">
+                        <p>MARK XXXV // TACTICAL HEADS-UP DISPLAY v3.5.1</p>
+                        <p>KERNEL: JARVIS.CORE.2026 // PID 0x7F4A</p>
+                        <p>ARC REACTOR: NOMINAL 3.2 GW OUTPUT</p>
+                        <p id="hud-telemetry-readout">SUIT INTEGRITY: 98.7% // HULL TEMP: 22°C</p>
+                        <p>THREAT LEVEL: MINIMAL // PERIMETER CLEAR</p>
+                        <p>NEURAL LINK: ACTIVE // LATENCY: 2ms</p>
+                        <p>COMMS: ENCRYPTED AES-256-GCM</p>
+                        <p>FLIGHT SYSTEMS: STANDBY // ALTITUDE: 0m</p>
+                    </div>
+
+                    <!-- System Status Dots -->
+                    <div class="hud-panel hud-dots-panel">
+                        <div class="hud-panel-header">SYSTEM STATUS</div>
+                        <div class="hud-dots-list">
+                            <div class="hud-dot-row"><span>SYSTEM ONLINE</span><span class="dot on" id="system-dot"></span></div>
+                            <div class="hud-dot-row"><span id="ai-name-label">J.A.R.V.I.S ACTIVE</span><span class="dot on" id="ai-dot"></span></div>
+                            <div class="hud-dot-row"><span>MICROPHONE</span><span class="dot on" id="mic-dot"></span></div>
+                            <div class="hud-dot-row"><span>MIC PERMISSION</span><span class="dot on"></span></div>
+                            <div class="hud-dot-row"><span>TTS SPEAKING</span><span class="dot off" id="tts-dot"></span></div>
+                            <div class="hud-dot-row"><span>WAKE DETECTED</span><span class="dot off" id="wake-dot"></span></div>
+                            <div class="hud-dot-row"><span>API CONNECTION</span><span class="dot on" id="api-dot"></span></div>
+                        </div>
+                    </div>
+
+                    <!-- Waveform Readouts + Webcam -->
+                    <div class="hud-panel hud-waveform-panel">
+                        <div class="hud-waveform-row">
+                            <span class="hud-wf-label">DY</span>
+                            <svg class="hud-wf-svg" id="wf-dy" viewBox="0 0 200 30" preserveAspectRatio="none"><path d="" stroke="var(--primary)" fill="none" stroke-width="1.5"/></svg>
+                        </div>
+                        <div class="hud-waveform-row">
+                            <span class="hud-wf-label">SJ</span>
+                            <svg class="hud-wf-svg" id="wf-sj" viewBox="0 0 200 30" preserveAspectRatio="none"><path d="" stroke="var(--primary)" fill="none" stroke-width="1.5"/></svg>
+                        </div>
+                        <div class="hud-waveform-row">
+                            <span class="hud-wf-label">PH</span>
+                            <svg class="hud-wf-svg" id="wf-ph" viewBox="0 0 200 30" preserveAspectRatio="none"><path d="" stroke="var(--primary)" fill="none" stroke-width="1.5"/></svg>
+                        </div>
+                        <div class="hud-waveform-row">
+                            <span class="hud-wf-label">KL</span>
+                            <svg class="hud-wf-svg" id="wf-kl" viewBox="0 0 200 30" preserveAspectRatio="none"><path d="" stroke="var(--primary)" fill="none" stroke-width="1.5"/></svg>
+                        </div>
+                    </div>
+
+                    <!-- Webcam Widget (New) -->
+                    <div class="hud-panel hud-webcam-panel">
+                        <div class="hud-webcam-header">
+                            <span>VISUAL FEED</span>
+                            <button class="hud-webcam-toggle" id="webcam-toggle" title="Toggle webcam">
+                                <span class="eye-icon">👁</span>
+                            </button>
+                        </div>
+                        <video id="webcam-preview" autoplay muted playsinline></video>
+                        <div class="hud-webcam-off" id="webcam-off-label">CAMERA OFF</div>
+                        <div class="hud-webcam-actions">
+                            <button class="hud-vision-btn" id="analyze-screen-btn" title="Analyze screen">🖥 SCREEN</button>
+                            <button class="hud-vision-btn" id="analyze-webcam-btn" title="Analyze webcam" disabled>📸 CAPTURE</button>
+                        </div>
+                    </div>
+
+                    <!-- System Log / Chat -->
+                    <div class="hud-panel hud-log-panel">
+                        <div class="hud-panel-header" id="log-header">SYSTEM_LOG // J.A.R.V.I.S.</div>
+                        <div class="hud-log-body" id="system-log">
+                            <div class="log-entry">
+                                <span class="prompt">> SYS</span><span class="message"> System initializing...</span>
+                            </div>
+                        </div>
+                        <div class="hud-interaction-bar">
+                            <input type="text" id="command-input" placeholder="Enter command..." />
+                            <button id="send-btn">SEND</button>
+                        </div>
+                    </div>
+
+                </aside>
+
+            </main>
+        </div>
+
+        <!-- ══════════════════════════════════════════════════════════ -->
+        <!-- PAGE: DASHBOARD (analytics & telemetry)                   -->
+        <!-- ══════════════════════════════════════════════════════════ -->
+        <div id="page-dashboard" class="page">
+            <div class="dash-grid">
+                <!-- Row 1: Key metrics -->
+                <div class="dash-card dash-card-accent" id="dash-local-pct">
+                    <div class="dash-card-label">LOCAL ROUTING</div>
+                    <div class="dash-card-value" id="dash-local-value">—%</div>
+                    <div class="dash-card-sub">queries handled free</div>
+                </div>
+                <div class="dash-card" id="dash-cost">
+                    <div class="dash-card-label">SESSION COST</div>
+                    <div class="dash-card-value" id="dash-cost-value">$0.00</div>
+                    <div class="dash-card-sub">current session</div>
+                </div>
+                <div class="dash-card dash-card-highlight" id="dash-saved">
+                    <div class="dash-card-label">MONEY SAVED</div>
+                    <div class="dash-card-value" id="dash-saved-value">$0.00</div>
+                    <div class="dash-card-sub">vs all-Gemini baseline</div>
+                </div>
+                <div class="dash-card" id="dash-queries">
+                    <div class="dash-card-label">TOTAL QUERIES</div>
+                    <div class="dash-card-value" id="dash-queries-value">0</div>
+                    <div class="dash-card-sub">this session</div>
+                </div>
+
+                <!-- Row 2: Source breakdown + Scheduler -->
+                <div class="dash-card dash-card-wide">
+                    <div class="dash-card-label">SOURCE BREAKDOWN</div>
+                    <div class="dash-breakdown" id="dash-breakdown">
+                        <div class="dash-bar-row">
+                            <span class="dash-bar-label">Loading...</span>
+                            <div class="dash-bar-track"><div class="dash-bar-fill" style="width:0%"></div></div>
+                            <span class="dash-bar-pct">0%</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="dash-card dash-card-wide">
+                    <div class="dash-card-label">SCHEDULED TASKS</div>
+                    <div class="dash-scheduler" id="dash-scheduler">
+                        <div class="dash-sched-row">
+                            <span class="dash-sched-name">Loading...</span>
+                            <span class="dash-sched-next">—</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 3: System telemetry + Memory bank -->
+                <div class="dash-card dash-card-wide">
+                    <div class="dash-card-label">SYSTEM TELEMETRY</div>
+                    <div class="dash-telemetry">
+                        <div class="dash-meter">
+                            <span class="dash-meter-label">CPU</span>
+                            <div class="dash-meter-track"><div class="dash-meter-fill" id="dash-cpu-bar" style="width:0%"></div></div>
+                            <span class="dash-meter-val" id="dash-cpu-val">—%</span>
+                        </div>
+                        <div class="dash-meter">
+                            <span class="dash-meter-label">RAM</span>
+                            <div class="dash-meter-track"><div class="dash-meter-fill" id="dash-ram-bar" style="width:0%"></div></div>
+                            <span class="dash-meter-val" id="dash-ram-val">—%</span>
+                        </div>
+                        <div class="dash-meter">
+                            <span class="dash-meter-label">DISK</span>
+                            <div class="dash-meter-track"><div class="dash-meter-fill" id="dash-disk-bar" style="width:0%"></div></div>
+                            <span class="dash-meter-val" id="dash-disk-val">—%</span>
+                        </div>
+                        <div class="dash-meter">
+                            <span class="dash-meter-label">PROCS</span>
+                            <div class="dash-meter-track"><div class="dash-meter-fill" id="dash-proc-bar" style="width:0%"></div></div>
+                            <span class="dash-meter-val" id="dash-proc-val">—</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="dash-card">
+                    <div class="dash-card-label">MEMORY BANK</div>
+                    <div class="dash-memory">
+                        <div class="dash-mem-count" id="dash-mem-count">0</div>
+                        <div class="dash-mem-label">vectors stored</div>
+                        <div class="dash-mem-status" id="dash-mem-status">OFFLINE</div>
+                    </div>
+                </div>
+                <div class="dash-card">
+                    <div class="dash-card-label">FEATURES ONLINE</div>
+                    <div class="dash-features" id="dash-features">
+                        <!-- populated by JS -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ══════════════════════════════════════════════════════════ -->
+        <!-- PAGE: SETTINGS (configuration panels)                     -->
+        <!-- ══════════════════════════════════════════════════════════ -->
+        <div id="page-settings" class="page">
+            <div class="settings-container">
+                <!-- Persona & Voice -->
+                <div class="settings-section">
+                    <div class="settings-section-title">PERSONA &amp; VOICE</div>
+                    <div class="settings-row">
+                        <span class="settings-label">Active Theme</span>
+                        <span class="settings-value" id="set-theme">—</span>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">Voice</span>
+                        <span class="settings-value" id="set-voice">—</span>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">Version</span>
+                        <span class="settings-value" id="set-version">MARK XXXV</span>
+                    </div>
+                </div>
+
+                <!-- API Status -->
+                <div class="settings-section">
+                    <div class="settings-section-title">API STATUS</div>
+                    <div id="set-api-list">
+                        <div class="settings-row">
+                            <span class="settings-label">Gemini</span>
+                            <span class="status-badge pending" id="set-api-gemini">CHECKING</span>
+                        </div>
+                        <div class="settings-row">
+                            <span class="settings-label">Groq</span>
+                            <span class="status-badge pending" id="set-api-groq">CHECKING</span>
+                        </div>
+                        <div class="settings-row">
+                            <span class="settings-label">Wolfram Alpha</span>
+                            <span class="status-badge pending" id="set-api-wolfram">CHECKING</span>
+                        </div>
+                        <div class="settings-row">
+                            <span class="settings-label">ElevenLabs</span>
+                            <span class="status-badge pending" id="set-api-elevenlabs">CHECKING</span>
+                        </div>
+                        <div class="settings-row">
+                            <span class="settings-label">Telegram</span>
+                            <span class="status-badge pending" id="set-api-telegram">CHECKING</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Audio Tuning -->
+                <div class="settings-section">
+                    <div class="settings-section-title">AUDIO TUNING</div>
+                    <div class="settings-row">
+                        <span class="settings-label">Clap Sensitivity</span>
+                        <div class="settings-slider-group">
+                            <input type="range" id="set-clap-slider" class="range-slider"
+                                   min="1000" max="15000" step="500" value="4000">
+                            <span class="settings-value" id="set-clap-value">4000</span>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">Audio Device</span>
+                        <span class="settings-value" id="set-audio-device">Device 0</span>
+                    </div>
+                </div>
+
+                <!-- Models -->
+                <div class="settings-section">
+                    <div class="settings-section-title">MODELS</div>
+                    <div class="settings-row">
+                        <span class="settings-label">Audio</span>
+                        <span class="settings-value settings-mono" id="set-model-audio">—</span>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">Complex</span>
+                        <span class="settings-value settings-mono" id="set-model-complex">—</span>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">Logic</span>
+                        <span class="settings-value settings-mono" id="set-model-logic">—</span>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">Routing</span>
+                        <span class="settings-value settings-mono" id="set-model-routing">—</span>
+                    </div>
+                </div>
+
+                <!-- System Info -->
+                <div class="settings-section">
+                    <div class="settings-section-title">SYSTEM INFO</div>
+                    <div class="settings-row">
+                        <span class="settings-label">Python</span>
+                        <span class="settings-value" id="set-python">—</span>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">Key Pool</span>
+                        <span class="settings-value" id="set-keypool">—</span>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">Debug Mode</span>
+                        <label class="settings-toggle">
+                            <input type="checkbox" id="set-debug-toggle">
+                            <span class="toggle-track"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom Ticker Bar -->
+        <div class="hud-ticker-bottom">
+            <div class="ticker-content" id="ticker-bottom-content">
+                <span>HUD BY JARVIS MARK-XXXV</span>
+                <span id="ticker-coords">42.41°N, -8.75°W</span>
+                <span id="ticker-uptime">UPTIME: —</span>
+                <span id="uptime-value" style="display:none">—</span>
+                <span id="commands-value" style="display:none">0</span>
+                <span id="weather-icon" style="display:none">🌤️</span>
+                <span id="weather-temp" style="display:none">--°C</span>
+                <span id="weather-desc" style="display:none">—</span>
+                <span id="location-tag" style="display:none">📍 —</span>
+            </div>
+        </div>
+
+        <!-- Transparency Controls Bar -->
+        <div class="hud-controls-bar">
+            <div class="hud-control-group">
+                <label class="hud-control-label">WINDOW</label>
+                <input type="range" id="transparency-slider" class="hud-slider" min="30" max="100" value="100" step="5">
+                <span class="hud-control-val" id="transparency-val">100%</span>
+            </div>
+            <div class="hud-control-group">
+                <label class="hud-control-label">PANELS</label>
+                <input type="range" id="panel-opacity-slider" class="hud-slider" min="10" max="100" value="70" step="5">
+                <span class="hud-control-val" id="panel-opacity-val">70%</span>
+            </div>
+        </div>
+
+    </div><!-- /.hud-frame -->
+
+    <!-- Mute Button Overlay -->
+    <button id="mute-toggle" class="mute-btn live">🎙 LIVE</button>
+
+    <!-- Activity Log (hidden, used by appendLog for activity monitor data) -->
+    <div id="activity-log" style="display:none"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JARVIS — Biometric Gateway</title>
+<style>
+  /* ── Reset ──────────────────────────────────────────────────── */
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #000;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    font-family: "Consolas", "SF Mono", "Fira Code", monospace;
+    color: #00e5ff;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* ── Phase system ──────────────────────────────────────────── */
+  .phase {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.8s ease;
+  }
+  .phase.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* ── Subtle grid background ────────────────────────────────── */
+  #phase-auth {
+    background:
+      radial-gradient(ellipse at center, #001520 0%, #000a10 40%, #000 80%);
+  }
+  #phase-auth::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,229,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,229,255,0.03) 1px, transparent 1px);
+    background-size: 60px 60px;
+    pointer-events: none;
+  }
+
+  /* ── Viewport corner brackets ──────────────────────────────── */
+  .viewport-bracket {
+    position: absolute;
+    width: 40px;
+    height: 40px;
+    border-color: rgba(0,229,255,0.25);
+    border-style: solid;
+    z-index: 5;
+  }
+  .viewport-bracket.tl { top: 12px; left: 12px; border-width: 2px 0 0 2px; }
+  .viewport-bracket.tr { top: 12px; right: 12px; border-width: 2px 2px 0 0; }
+  .viewport-bracket.bl { bottom: 12px; left: 12px; border-width: 0 0 2px 2px; }
+  .viewport-bracket.br { bottom: 12px; right: 12px; border-width: 0 2px 2px 0; }
+
+  /* ── Title ─────────────────────────────────────────────────── */
+  #auth-title {
+    font-size: 12px;
+    letter-spacing: 8px;
+    color: rgba(0,229,255,0.4);
+    text-transform: uppercase;
+    margin-bottom: 48px;
+    position: relative;
+    z-index: 2;
+  }
+  #auth-title::after {
+    content: '';
+    display: block;
+    width: 120px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(0,229,255,0.3), transparent);
+    margin: 12px auto 0;
+  }
+
+  /* ── Camera container ──────────────────────────────────────── */
+  #cam-container {
+    position: relative;
+    width: 420px;
+    height: 320px;
+    border: 1px solid rgba(0,229,255,0.15);
+    background: #000;
+    overflow: hidden;
+    z-index: 2;
+  }
+
+  #cam-feed {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    filter: brightness(0.85) contrast(1.1) saturate(0.8);
+    opacity: 0;
+    transition: opacity 0.5s ease;
+  }
+  #cam-feed.live { opacity: 1; }
+
+  /* Camera placeholder before feed starts */
+  #cam-placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    letter-spacing: 4px;
+    color: rgba(0,229,255,0.2);
+  }
+
+  /* Scan line */
+  #scan-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent 0%, #00e5ff 30%, #00e5ff 70%, transparent 100%);
+    box-shadow: 0 0 12px rgba(0,229,255,0.6), 0 0 4px rgba(0,229,255,0.3);
+    animation: scanSweep 2.5s linear infinite;
+    z-index: 3;
+    opacity: 0.7;
+  }
+  @keyframes scanSweep {
+    0%   { top: -2px; }
+    100% { top: 100%; }
+  }
+
+  /* Corner brackets on camera */
+  .cam-corner {
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    border-color: #00e5ff;
+    border-style: solid;
+    z-index: 4;
+    transition: border-color 0.4s ease;
+  }
+  .cam-corner.tl { top: -1px; left: -1px; border-width: 2px 0 0 2px; }
+  .cam-corner.tr { top: -1px; right: -1px; border-width: 2px 2px 0 0; }
+  .cam-corner.bl { bottom: -1px; left: -1px; border-width: 0 0 2px 2px; }
+  .cam-corner.br { bottom: -1px; right: -1px; border-width: 0 2px 2px 0; }
+
+  /* ── Liveness Indicator Gauge Overlay ──────────────────────── */
+  #liveness-gauge-container {
+    position: absolute;
+    bottom: 25px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 75%;
+    height: 8px;
+    background: rgba(0, 229, 255, 0.1);
+    border: 1px solid rgba(0, 229, 255, 0.25);
+    border-radius: 4px;
+    overflow: visible;
+    z-index: 8;
+    display: none;
+    transition: opacity 0.4s ease;
+  }
+  #liveness-gauge-fill {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 50%;
+    background: #ff3333;
+    box-shadow: 0 0 8px currentColor;
+    border-radius: 3px;
+    transition: width 0.1s linear, background-color 0.15s ease;
+  }
+  .target-tick {
+    position: absolute;
+    top: -4px;
+    width: 2px;
+    height: 14px;
+    z-index: 9;
+  }
+  .target-tick.left {
+    left: 35%;
+    background: #ffaa00;
+    box-shadow: 0 0 4px #ffaa00;
+  }
+  .target-tick.right {
+    left: 65%;
+    background: #ffaa00;
+    box-shadow: 0 0 4px #ffaa00;
+  }
+  .target-tick.center {
+    left: 50%;
+    width: 3px;
+    background: #00ff88;
+    box-shadow: 0 0 6px #00ff88;
+  }
+
+  /* ── Readout panel (right side) ────────────────────────────── */
+  #readout-panel {
+    position: absolute;
+    right: 60px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 2;
+  }
+  .readout-row {
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: rgba(0,229,255,0.35);
+    margin-bottom: 10px;
+    white-space: nowrap;
+  }
+  .readout-row .val {
+    color: rgba(0,229,255,0.6);
+    margin-left: 4px;
+  }
+
+  /* ── Progress section ──────────────────────────────────────── */
+  #progress-section {
+    width: 420px;
+    margin-top: 28px;
+    z-index: 2;
+  }
+
+  #progress-label {
+    font-size: 10px;
+    letter-spacing: 4px;
+    color: rgba(0,229,255,0.3);
+    margin-bottom: 10px;
+    text-transform: uppercase;
+  }
+
+  #progress-track {
+    width: 100%;
+    height: 2px;
+    background: rgba(0,229,255,0.08);
+    position: relative;
+    overflow: hidden;
+  }
+
+  #progress-fill {
+    height: 100%;
+    width: 0%;
+    background: #00e5ff;
+    box-shadow: 0 0 8px rgba(0,229,255,0.5);
+    transition: width 0.3s ease, background 0.4s ease, box-shadow 0.4s ease;
+  }
+
+  /* ── Status text ───────────────────────────────────────────── */
+  #status-text {
+    font-size: 12px;
+    letter-spacing: 5px;
+    margin-top: 20px;
+    color: rgba(0,229,255,0.6);
+    min-height: 20px;
+    text-transform: uppercase;
+    z-index: 2;
+    transition: color 0.4s ease;
+  }
+
+  #attempt-text {
+    font-size: 10px;
+    letter-spacing: 3px;
+    margin-top: 8px;
+    color: rgba(0,229,255,0.25);
+    min-height: 16px;
+    z-index: 2;
+  }
+
+  /* ── Success flash ─────────────────────────────────────────── */
+  #success-flash {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    z-index: 10;
+  }
+
+  /* ── PHASE 2: Video ────────────────────────────────────────── */
+  #phase-video {
+    background: #000;
+  }
+
+  #intro-video {
+    width: 100vw;
+    height: 100vh;
+    object-fit: cover;
+  }
+
+  /* ── PHASE 3: Text fallback boot ───────────────────────────── */
+  #phase-textboot {
+    background: #000;
+    font-size: 13px;
+    letter-spacing: 3px;
+    color: rgba(0,229,255,0.5);
+  }
+
+  #boot-lines {
+    text-align: left;
+    max-width: 600px;
+  }
+
+  .boot-line {
+    opacity: 0;
+    margin-bottom: 6px;
+    transition: opacity 0.3s ease;
+  }
+  .boot-line.show { opacity: 1; }
+  .boot-line .ok { color: #00ff88; }
+  .boot-line .fail { color: #ff4444; }
+
+  /* ── Secure Camera Error & PIN Bypass Overlay ───────────────── */
+  #sensor-error-overlay {
+    display: none;
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 5, 10, 0.96);
+    z-index: 100;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+    text-align: center;
+    animation: fadeIn 0.4s ease-out;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .sensor-title {
+    font-size: 16px;
+    letter-spacing: 6px;
+    color: #ff3333;
+    margin-bottom: 20px;
+    font-weight: bold;
+    text-shadow: 0 0 10px rgba(255, 51, 51, 0.4);
+  }
+
+  .sensor-body {
+    font-size: 11px;
+    letter-spacing: 2px;
+    color: rgba(0, 229, 255, 0.75);
+    max-width: 520px;
+    margin-bottom: 30px;
+    line-height: 1.8;
+  }
+
+  .timer-highlight {
+    color: #00ff88;
+    font-weight: bold;
+    text-shadow: 0 0 5px rgba(0, 255, 136, 0.4);
+  }
+
+  #bypass-gate-container {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    animation: slideUp 0.5s ease-out;
+  }
+  @keyframes slideUp {
+    from { transform: translateY(15px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+
+  .bypass-title {
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: rgba(0, 229, 255, 0.4);
+    margin-bottom: 15px;
+    text-transform: uppercase;
+  }
+
+  #bypass-pin-input {
+    background: rgba(0, 229, 255, 0.04);
+    border: 1px solid rgba(0, 229, 255, 0.25);
+    color: #00e5ff;
+    font-family: "Consolas", monospace;
+    text-align: center;
+    font-size: 14px;
+    letter-spacing: 5px;
+    padding: 12px 20px;
+    width: 290px;
+    outline: none;
+    border-radius: 4px;
+    margin-bottom: 15px;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+    box-shadow: 0 0 10px rgba(0, 229, 255, 0.05);
+  }
+  #bypass-pin-input:focus {
+    border-color: #00e5ff;
+    box-shadow: 0 0 12px rgba(0, 229, 255, 0.2);
+  }
+
+  #bypass-error-msg {
+    font-size: 10px;
+    color: #ff3333;
+    letter-spacing: 2px;
+    margin-top: 5px;
+    min-height: 15px;
+    text-transform: uppercase;
+    text-shadow: 0 0 4px rgba(255, 51, 51, 0.3);
+  }
+
+  /* ── Utility ───────────────────────────────────────────────── */
+  .color-success { color: #00ff88 !important; }
+  .color-fail    { color: #ff3333 !important; }
+  .color-amber   { color: #ffaa00 !important; }
+</style>
+</head>
+<body>
+
+  <!-- ════════ PHASE 1: Authentication ════════ -->
+  <div id="phase-auth" class="phase visible">
+    <!-- Viewport corners -->
+    <div class="viewport-bracket tl"></div>
+    <div class="viewport-bracket tr"></div>
+    <div class="viewport-bracket bl"></div>
+    <div class="viewport-bracket br"></div>
+
+    <div id="auth-title">J.A.R.V.I.S. &nbsp;// &nbsp;BIOMETRIC GATEWAY</div>
+
+    <div id="cam-container">
+      <div id="cam-placeholder">INITIALIZING SENSOR</div>
+      <img id="cam-feed" src="" alt="">
+      
+      <!-- Liveness Gauge Overlay -->
+      <div id="liveness-gauge-container">
+        <div id="liveness-gauge-fill"></div>
+        <div class="target-tick left"></div>
+        <div class="target-tick right"></div>
+        <div class="target-tick center"></div>
+      </div>
+      
+      <div id="scan-line"></div>
+      <div class="cam-corner tl"></div>
+      <div class="cam-corner tr"></div>
+      <div class="cam-corner bl"></div>
+      <div class="cam-corner br"></div>
+    </div>
+
+    <!-- Readout panel -->
+    <div id="readout-panel">
+      <div class="readout-row">CHALLENGE <span class="val" id="ro-hand">--</span></div>
+      <div class="readout-row">STABILITY <span class="val" id="ro-conf">--</span></div>
+      <div class="readout-row">STATUS <span class="val" id="ro-status">IDLE</span></div>
+    </div>
+
+    <!-- Progress -->
+    <div id="progress-section">
+      <div id="progress-label">scanning biometric signature</div>
+      <div id="progress-track">
+        <div id="progress-fill"></div>
+      </div>
+    </div>
+
+    <div id="status-text">ALIGN FACE IN VIEWPORT</div>
+    <div id="attempt-text"></div>
+
+    <div id="success-flash"></div>
+  </div>
+
+  <!-- ════════ PHASE 2: Intro Video ════════ -->
+  <div id="phase-video" class="phase">
+    <video id="intro-video" preload="auto"></video>
+  </div>
+
+  <!-- ════════ PHASE 3: Text Boot Fallback ════════ -->
+  <div id="phase-textboot" class="phase">
+    <div id="boot-lines">
+      <div class="boot-line" data-delay="0">BIOMETRIC GATE .............. <span class="ok">PASSED</span></div>
+      <div class="boot-line" data-delay="400">NEURAL CORE ................. <span class="ok">LOADING</span></div>
+      <div class="boot-line" data-delay="800">GEMINI LIVE SESSION ......... <span class="ok">CONNECTING</span></div>
+      <div class="boot-line" data-delay="1200">MEMORY BANK ................. <span class="ok">ONLINE</span></div>
+      <div class="boot-line" data-delay="1600">INTELLIGENCE ROUTER ......... <span class="ok">READY</span></div>
+      <div class="boot-line" data-delay="2000">SCHEDULER ................... <span class="ok">ARMED</span></div>
+      <div class="boot-line" data-delay="2400">AUDIO PIPELINE .............. <span class="ok">INITIALIZED</span></div>
+      <div class="boot-line" data-delay="2800">WAKE DETECTOR ............... <span class="ok">ACTIVE</span></div>
+      <div class="boot-line" data-delay="3200">ALL SYSTEMS ................. <span class="ok">NOMINAL</span></div>
+      <div class="boot-line" data-delay="3800">BOOTING J.A.R.V.I.S. ......</div>
+    </div>
+  </div>
+
+  <!-- ════════ Camera Error & PIN Bypass Overlay ════════ -->
+  <div id="sensor-error-overlay">
+    <div class="sensor-title">[!] SENSOR BLOCKED / BUSY</div>
+    <div class="sensor-body">
+      Camera device initialization blocked or timed out. Known conflicting applications:<br>
+      <span style="color: #ffaa00;">• Microsoft Teams &nbsp;&nbsp; • Zoom &nbsp;&nbsp; • Google Meet &nbsp;&nbsp; • Skype</span><br><br>
+      Attempting to re-acquire camera sensor... <span id="retry-timer" class="timer-highlight">5s</span>
+    </div>
+    
+    <div id="bypass-gate-container">
+      <div class="bypass-title">SECURE ALPHANUMERIC BYPASS REQUIRED</div>
+      <input type="password" id="bypass-pin-input" placeholder="ENTER MASTER CREDENTIALS" autocomplete="off">
+      <div id="bypass-error-msg"></div>
+    </div>
+  </div>
+
+<script>
+  // ── Block all keyboard shortcuts ──────────────────────────────
+  document.addEventListener('keydown', (e) => {
+    // Only allow input in the PIN field
+    if (document.activeElement && document.activeElement.id === 'bypass-pin-input') {
+      if (e.key === 'Enter') {
+        submitBypassPin();
+      }
+      return;
+    }
+    
+    if (e.key === 'Escape' || (e.altKey && e.key === 'F4')) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  });
+
+  // Disable right-click context menu
+  document.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  // ── DOM refs ──────────────────────────────────────────────────
+  const camFeed      = document.getElementById('cam-feed');
+  const camPlaceholder = document.getElementById('cam-placeholder');
+  const progressFill = document.getElementById('progress-fill');
+  const progressLabel= document.getElementById('progress-label');
+  const statusText   = document.getElementById('status-text');
+  const attemptText  = document.getElementById('attempt-text');
+  const successFlash = document.getElementById('success-flash');
+  const roHand       = document.getElementById('ro-hand');
+  const roConf       = document.getElementById('ro-conf');
+  const roStatus     = document.getElementById('ro-status');
+  const camCorners   = document.querySelectorAll('.cam-corner');
+
+  // Liveness indicator refs
+  const livenessGauge = document.getElementById('liveness-gauge-container');
+  const livenessFill  = document.getElementById('liveness-gauge-fill');
+  
+  // Bypass overlay refs
+  const errorOverlay    = document.getElementById('sensor-error-overlay');
+  const retryTimer      = document.getElementById('retry-timer');
+  const bypassContainer = document.getElementById('bypass-gate-container');
+  const bypassInput     = document.getElementById('bypass-pin-input');
+  const bypassErrorMsg  = document.getElementById('bypass-error-msg');
+
+  let currentTargetLiveness = "Center";
+
+  // ── Called when auth screen should appear ─────────────────────
+  function startAuthScreen() {
+    statusText.textContent = 'ALIGN FACE IN VIEWPORT';
+    roStatus.textContent   = 'SCANNING';
+  }
+
+  // ── Camera feed from Python (base64 JPEG) ────────────────────
+  function updateCameraFeed(base64Data) {
+    camFeed.src = base64Data;
+    if (!camFeed.classList.contains('live')) {
+      camFeed.classList.add('live');
+      camPlaceholder.style.display = 'none';
+    }
+  }
+
+  // ── Auth attempt started ──────────────────────────────────────
+  function onAuthAttempt(num, total) {
+    attemptText.textContent    = 'ATTEMPT ' + num + ' OF ' + total;
+    progressFill.style.width   = '0%';
+    progressFill.style.background = '#00e5ff';
+    progressFill.style.boxShadow  = '0 0 8px rgba(0,229,255,0.5)';
+    statusText.textContent     = 'ALIGN FACE IN VIEWPORT';
+    statusText.style.color     = '';
+    roStatus.textContent       = 'SCANNING';
+    roHand.textContent         = '--';
+    roConf.textContent         = '--';
+    _setCornersColor('#00e5ff');
+    setLivenessGaugeVisible(false);
+  }
+
+  // ── Scan progress (face detected and matching) ───────────────
+  function onScanProgress(progress, label, conf) {
+    progressFill.style.width = progress + '%';
+    roHand.textContent   = label;
+    roConf.textContent   = conf + '%';
+    roStatus.textContent = 'VERIFYING';
+
+    if (progress < 40) {
+      progressFill.style.background = '#00e5ff';
+      progressFill.style.boxShadow  = '0 0 8px rgba(0,229,255,0.5)';
+      statusText.textContent = 'VERIFYING BIOMETRIC SIGNATURE';
+      statusText.style.color = '';
+    } else if (progress < 80) {
+      progressFill.style.background = '#ffaa00';
+      progressFill.style.boxShadow  = '0 0 10px rgba(255,170,0,0.5)';
+      statusText.textContent = 'LIVENESS YAW: ' + currentTargetLiveness.toUpperCase();
+      statusText.style.color = '#ffaa00';
+      _setCornersColor('#ffaa00');
+    } else {
+      progressFill.style.background = '#00ff88';
+      progressFill.style.boxShadow  = '0 0 12px rgba(0,255,136,0.6)';
+      statusText.textContent = 'LIVENESS CONFIRMED // ALIGNING';
+      statusText.style.color = '#00ff88';
+      _setCornersColor('#00ff88');
+    }
+  }
+
+  // ── Wrong target / identity mismatch ──────────────────────────
+  function onWrongHand(label, progress) {
+    progressFill.style.width = progress + '%';
+    progressFill.style.background = '#ff4444';
+    progressFill.style.boxShadow  = '0 0 8px rgba(255,68,68,0.5)';
+    roHand.textContent   = label;
+    roStatus.textContent = 'REJECTED';
+    statusText.textContent = 'IDENTITY MISMATCH';
+    statusText.style.color = '#ff4444';
+    _setCornersColor('#ff4444');
+  }
+
+  // ── No target in frame ────────────────────────────────────────
+  function onNoHand(progress) {
+    progressFill.style.width = progress + '%';
+    progressFill.style.background = '#00e5ff';
+    progressFill.style.boxShadow  = '0 0 8px rgba(0,229,255,0.5)';
+    roHand.textContent   = '--';
+    roConf.textContent   = '--';
+    roStatus.textContent = 'SCANNING';
+    statusText.textContent = 'ALIGN FACE IN VIEWPORT';
+    statusText.style.color = '';
+    _setCornersColor('#00e5ff');
+  }
+
+  // ── Attempt failed (timeout) ──────────────────────────────────
+  function onAttemptFailed(attemptNum) {
+    statusText.textContent = 'SCAN TIMEOUT — RETRYING';
+    statusText.style.color = '#ffaa00';
+    progressFill.style.width = '0%';
+  }
+
+  // ── Auth succeeded ────────────────────────────────────────────
+  function onAuthSuccess() {
+    // Hide error overlay if active
+    errorOverlay.style.display = 'none';
+
+    statusText.textContent = 'IDENTITY CONFIRMED';
+    statusText.style.color = '#00ff88';
+    roStatus.textContent   = 'VERIFIED';
+    progressFill.style.width = '100%';
+    progressFill.style.background = '#00ff88';
+    progressFill.style.boxShadow  = '0 0 14px rgba(0,255,136,0.7)';
+    progressLabel.textContent = 'access granted';
+    _setCornersColor('#00ff88');
+
+    // Green flash
+    successFlash.style.background = 'radial-gradient(ellipse at center, rgba(0,255,136,0.15), transparent 70%)';
+    successFlash.style.opacity = '1';
+    setTimeout(() => { successFlash.style.opacity = '0'; }, 600);
+  }
+
+  // ── Auth failed (all attempts exhausted) ──────────────────────
+  function onAuthFailed() {
+    statusText.textContent = 'ACCESS DENIED';
+    statusText.style.color = '#ff3333';
+    attemptText.textContent = 'SHUTTING DOWN';
+    roStatus.textContent    = 'DENIED';
+    progressFill.style.width = '100%';
+    progressFill.style.background = '#ff3333';
+    progressFill.style.boxShadow  = '0 0 12px rgba(255,51,51,0.6)';
+    progressLabel.textContent = 'authentication failed';
+    _setCornersColor('#ff3333');
+
+    // Red flash
+    successFlash.style.background = 'radial-gradient(ellipse at center, rgba(255,0,0,0.12), transparent 70%)';
+    successFlash.style.opacity = '1';
+    setTimeout(() => { successFlash.style.opacity = '0'; }, 800);
+  }
+
+  // ── Hardware error (Tier 1 — amber, auto-skip) ────────────────
+  function onHardwareError(message) {
+    statusText.textContent  = message;
+    statusText.style.color  = '#ffaa00';
+    attemptText.textContent = 'BYPASSING AUTH GATE';
+    roStatus.textContent    = 'OFFLINE';
+    progressFill.style.width      = '100%';
+    progressFill.style.background = '#ffaa00';
+    progressFill.style.boxShadow  = '0 0 10px rgba(255,170,0,0.5)';
+    progressLabel.textContent     = 'hardware unavailable';
+    _setCornersColor('#ffaa00');
+
+    // Hide camera
+    camFeed.style.display = 'none';
+    camPlaceholder.textContent = message;
+    camPlaceholder.style.display = 'flex';
+    camPlaceholder.style.color   = '#ffaa00';
+  }
+
+  // ── Transition: Auth → Video ──────────────────────────────────
+  function transitionToVideo(videoSrc) {
+    const authPhase  = document.getElementById('phase-auth');
+    const videoPhase = document.getElementById('phase-video');
+    const vid        = document.getElementById('intro-video');
+
+    // Fade out auth
+    authPhase.style.transition = 'opacity 0.6s ease';
+    authPhase.classList.remove('visible');
+
+    setTimeout(() => {
+      // Set video source and show
+      vid.src = videoSrc;
+      videoPhase.classList.add('visible');
+      vid.play().catch(() => {
+        // Video failed to play — go to text boot
+        transitionToTextBoot();
+      });
+    }, 700);
+
+    // When video ends, notify Python
+    vid.addEventListener('ended', () => {
+      if (window.pywebview && window.pywebview.api) {
+        window.pywebview.api.on_video_complete();
+      }
+    });
+  }
+
+  // ── Transition: Auth → Text boot (no video fallback) ──────────
+  function transitionToTextBoot() {
+    const authPhase = document.getElementById('phase-auth');
+    const textPhase = document.getElementById('phase-textboot');
+
+    authPhase.classList.remove('visible');
+
+    setTimeout(() => {
+      textPhase.classList.add('visible');
+
+      // Reveal lines one by one
+      const lines = textPhase.querySelectorAll('.boot-line');
+      lines.forEach((line) => {
+        const delay = parseInt(line.dataset.delay) || 0;
+        setTimeout(() => line.classList.add('show'), delay);
+      });
+
+      // After all lines shown, notify Python
+      const maxDelay = Math.max(...Array.from(lines).map(l => parseInt(l.dataset.delay) || 0));
+      setTimeout(() => {
+        if (window.pywebview && window.pywebview.api) {
+          window.pywebview.api.on_video_complete();
+        }
+      }, maxDelay + 1500);
+    }, 700);
+  }
+
+  // ── Helper: set corner bracket colors ─────────────────────────
+  function _setCornersColor(color) {
+    camCorners.forEach(c => { c.style.borderColor = color; });
+  }
+
+  // ── Liveness Gauge Helpers ─────────────────────────────────────
+  function setLivenessGaugeVisible(visible) {
+    livenessGauge.style.display = visible ? 'block' : 'none';
+  }
+
+  function onLivenessChallenge(targetDirection) {
+    currentTargetLiveness = targetDirection;
+    statusText.textContent = 'LIVENESS YAW: TURN ' + targetDirection.toUpperCase();
+    statusText.style.color = '#ffaa00';
+    _setCornersColor('#ffaa00');
+    roHand.textContent = 'YAW TURN';
+    roStatus.textContent = 'LIVENESS';
+  }
+
+  function onLivenessUpdate(ratio, overallProgress) {
+    // Map ratio [0.2, 0.8] to gauge percentage width
+    let percent = Math.min(100, Math.max(0, (ratio - 0.2) / 0.6 * 100));
+    livenessFill.style.width = percent + '%';
+    
+    // Update overall progress bar
+    progressFill.style.width = overallProgress + '%';
+
+    // Color shifting: Red -> Yellow -> Green as we approach the target direction
+    let dist = 1.0;
+    if (currentTargetLiveness === "Left") {
+      dist = ratio < 0.35 ? 0 : Math.max(0, ratio - 0.35);
+    } else if (currentTargetLiveness === "Right") {
+      dist = ratio > 0.65 ? 0 : Math.max(0, 0.65 - ratio);
+    } else if (currentTargetLiveness === "Center") {
+      if (ratio >= 0.45 && ratio <= 0.55) {
+        dist = 0;
+      } else {
+        dist = Math.abs(ratio - 0.5);
+      }
+    }
+
+    // Apply color shifting based on distance to gesture target
+    if (dist === 0) {
+      livenessFill.style.backgroundColor = '#00ff88'; // Target acquired (Green)
+    } else if (dist < 0.12) {
+      livenessFill.style.backgroundColor = '#ffaa00'; // Approaching (Yellow)
+    } else {
+      livenessFill.style.backgroundColor = '#ff3333'; // Distance high (Red)
+    }
+  }
+
+  // ── Camera Blocked / Retry & Bypass Handlers ───────────────────
+  function updateCameraRetryTimer(seconds) {
+    retryTimer.textContent = seconds + 's';
+  }
+
+  function showCameraErrorOverlay() {
+    errorOverlay.style.display = 'flex';
+    retryTimer.parentNode.innerHTML = 'SENSOR BUSY // RETRIES EXHAUSTED';
+    
+    // Smoothly reveal PIN container once retry loop finishes
+    setTimeout(() => {
+      bypassContainer.style.display = 'flex';
+      bypassInput.focus();
+    }, 600);
+  }
+
+  function submitBypassPin() {
+    const pin = bypassInput.value;
+    if (!pin) return;
+    
+    bypassErrorMsg.textContent = 'DECRYPTING CONTAINER...';
+    bypassErrorMsg.style.color = '#00e5ff';
+    
+    if (window.pywebview && window.pywebview.api) {
+      window.pywebview.api.verify_bypass_pin(pin).then(res => {
+        if (res && res.success) {
+          bypassErrorMsg.textContent = 'ACCESS GRANTED';
+          bypassErrorMsg.style.color = '#00ff88';
+        } else {
+          bypassErrorMsg.textContent = res ? res.message : 'ACCESS LOGIC REJECTED';
+          bypassErrorMsg.style.color = '#ff3333';
+          bypassInput.value = '';
+          bypassInput.focus();
+        }
+      }).catch(err => {
+        bypassErrorMsg.textContent = 'BRIDGE CRITICAL FAIL';
+        bypassErrorMsg.style.color = '#ff3333';
+      });
+    }
+  }
+</script>
+</body>
+</html>

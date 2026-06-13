@@ -1,0 +1,28 @@
+# requirements-upgrade.txt
+# ─────────────────────────────────────────────────────────────
+# Install AFTER base requirements: pip install -r requirements-upgrade.txt
+# These are heavy dependencies — do NOT merge into requirements.txt
+# until tested and stable on your machine.
+# ─────────────────────────────────────────────────────────────
+
+# B2 — Faster Whisper STT (replaces Vosk wake-word detection)
+# Uses CTranslate2 backend (~500MB compiled, supports CUDA + CPU)
+faster-whisper>=1.0.0
+
+# B3 — Silero VAD (replaces RMS threshold clap detection)
+# Lightweight PyTorch-based voice activity detection (~50MB)
+silero-vad>=5.1.2
+
+# B4 — Biometric Identity Auth (Face Recognition + DPAPI keystore)
+# Uses ONNX Runtime with ArcFace/YuNet models — no TensorFlow, no dlib
+onnxruntime>=1.17.0
+cryptography>=42.0.0
+pywin32>=306
+
+# Phase 1 — OS-Level Screen Intelligence
+pytesseract>=0.3.10          # OCR fallback (requires Tesseract binary)
+watchdog>=4.0.0              # File system event monitoring (Phase 2 prereq)
+
+# Phase 3 — Document Intelligence (lazy-loaded, graceful degradation)
+pypdf>=4.0.0                 # PDF text extraction (fast, native)
+python-docx>=1.1.0           # Word document parsing (.docx)
