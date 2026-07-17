@@ -20,3 +20,19 @@ core/auth/models/
 .env.encrypted
 .env.backup
 core/auth/boot.env.tmp
+core/auth/lockout.json
+
+# Graphify analysis output (generated, contains absolute paths)
+graphify-out/
+.graphify_root
+
+# Runtime session transcripts
+session_*.jsonl
+
+# SQLite WAL/journal sidecars (runtime, never commit)
+*.db-shm
+*.db-wal
+*.db-journal
+
+# Browser profile (runtime, machine-specific)
+jarvis_profile/

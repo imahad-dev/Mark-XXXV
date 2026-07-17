@@ -29,6 +29,121 @@ def get_base_dir():
 
 
 # ---------------------------------------------------------------------------
+# Security constants & helpers
+# ---------------------------------------------------------------------------
+FACE_SIMILARITY_THRESHOLD = 0.6
+_PIN_LOCK = threading.Lock()
+
+
+def _load_decrypted_env(decrypted_content: str) -> None:
+    """Parse KEY=VALUE pairs from decrypted content into os.environ."""
+    for line in decrypted_content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            k, v = line.split("=", 1)
+            k = k.strip()
+            v = v.strip()
+            if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+                v = v[1:-1]
+            os.environ[k] = v
+
+
+def _atomic_write_json(path: Path, data: dict) -> None:
+    """Write JSON atomically via temp-file + rename to prevent corruption."""
+    import tempfile
+    tmp_fd, tmp_path = tempfile.mkstemp(
+        dir=str(path.parent), suffix=".tmp", prefix=".lockout_"
+    )
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.replace(tmp_path, str(path))  # atomic on same filesystem
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def _check_pin_lockout():
+    """Check if PIN entry is locked out. Returns (is_locked, seconds_remaining)."""
+    lockout_path = get_base_dir() / "core" / "auth" / "lockout.json"
+    with _PIN_LOCK:
+        if not lockout_path.exists():
+            return False, 0
+        try:
+            data = json.loads(lockout_path.read_text(encoding="utf-8"))
+            remaining = data.get("lockout_until", 0) - time.time()
+            if remaining > 0:
+                return True, int(remaining)
+            return False, 0
+        except Exception:
+            return False, 0
+
+
+def _record_pin_failure():
+    """Increment failure count and apply exponential backoff lockout."""
+    lockout_path = get_base_dir() / "core" / "auth" / "lockout.json"
+    with _PIN_LOCK:
+        data = {"failed_attempts": 0, "lockout_until": 0}
+        if lockout_path.exists():
+            try:
+                data = json.loads(lockout_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        data["failed_attempts"] = data.get("failed_attempts", 0) + 1
+        n = data["failed_attempts"]
+        if n >= 10:
+            delay = 300
+        elif n >= 5:
+            delay = 60
+        elif n >= 3:
+            delay = 30
+        else:
+            delay = 0
+        if delay > 0:
+            data["lockout_until"] = time.time() + delay
+        _atomic_write_json(lockout_path, data)
+        return n, delay
+
+
+def _reset_pin_lockout():
+    """Clear lockout state on successful PIN entry."""
+    lockout_path = get_base_dir() / "core" / "auth" / "lockout.json"
+    with _PIN_LOCK:
+        if lockout_path.exists():
+            lockout_path.unlink(missing_ok=True)
+
+
+def _hash_pin(pin: str, salt: bytes = None):
+    """Hash PIN with PBKDF2-HMAC-SHA256 + random salt. Returns hex string 'salt_hex:hash_hex'."""
+    import hashlib
+    if salt is None:
+        salt = os.urandom(16)
+    dk = hashlib.pbkdf2_hmac("sha256", pin.encode("utf-8"), salt, iterations=100_000)
+    return f"{salt.hex()}:{dk.hex()}", salt
+
+
+def _verify_pin(pin: str, stored: str) -> bool:
+    """Verify PIN against stored hash. Supports both PBKDF2 (salt:hash) and legacy SHA-256."""
+    import hashlib
+    import hmac as _hmac
+    if ":" in stored:
+        # PBKDF2 format: salt_hex:hash_hex
+        salt_hex, hash_hex = stored.split(":", 1)
+        salt = bytes.fromhex(salt_hex)
+        dk = hashlib.pbkdf2_hmac("sha256", pin.encode("utf-8"), salt, iterations=100_000)
+        return _hmac.compare_digest(dk.hex(), hash_hex)
+    else:
+        # Legacy unsalted SHA-256 — constant-time compare
+        pin_hash = hashlib.sha256(pin.encode("utf-8")).hexdigest()
+        return _hmac.compare_digest(pin_hash, stored)
+
+
+# ---------------------------------------------------------------------------
 # Theme definitions – each maps to a Gemini prebuilt voice
 # ---------------------------------------------------------------------------
 THEMES = {
@@ -332,54 +447,54 @@ class Api:
         return None
 
     def verify_bypass_pin(self, pin):
-        """Verify bypass PIN and load decrypted env vars directly into memory."""
+        """Verify bypass PIN with rate-limiting, PBKDF2, and constant-time compare."""
         if not pin:
             return {"success": False, "message": "PIN CANNOT BE EMPTY"}
+
+        # Rate-limit check
+        is_locked, remaining = _check_pin_lockout()
+        if is_locked:
+            return {"success": False, "message": f"LOCKED OUT \u2014 RETRY IN {remaining}s"}
+
         try:
-            import hashlib
             from core.auth import keystore
-            
-            pin_hash = hashlib.sha256(pin.encode("utf-8")).hexdigest()
-            stored_hash = "c6c805ebecbb05a414e21a221f73752e36780c98f98c851d9bb09e25cc4c23ea"
-            
+
+            # Read stored hash from file \u2014 fail if missing
             bypass_pin_path = get_base_dir() / "core" / "auth" / "bypass.pin"
-            if bypass_pin_path.exists():
-                stored_hash = bypass_pin_path.read_text(encoding="utf-8").strip()
-                
-            if pin_hash == stored_hash:
-                # Decrypt keys
-                fernet_key = keystore.load_fernet_key()
-                decrypted_content = keystore.decrypt_env_to_memory(fernet_key)
-                
-                # Load decrypted content into os.environ
-                import os
-                for line in decrypted_content.splitlines():
-                    line = line.strip()
-                    if not line or line.startswith("#"):
-                        continue
-                    if "=" in line:
-                        k, v = line.split("=", 1)
-                        k = k.strip()
-                        v = v.strip()
-                        if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
-                            v = v[1:-1]
-                        os.environ[k] = v
-                
-                # Set cleared flag
-                os.environ["JARVIS_AUTH_CLEARED"] = "1"
-                
-                self.ui._auth_passed = True
-                self.ui._js("onAuthSuccess()")
-                
-                # Transition UI
-                import threading
-                threading.Thread(target=self.ui._auth_transition_to_video, daemon=True).start()
-                return {"success": True}
-            else:
-                return {"success": False, "message": "INVALID BYPASS CREDENTIALS"}
+            if not bypass_pin_path.exists():
+                return {"success": False, "message": "BYPASS PIN NOT CONFIGURED"}
+            stored_hash = bypass_pin_path.read_text(encoding="utf-8").strip()
+
+            if not _verify_pin(pin, stored_hash):
+                attempts, delay = _record_pin_failure()
+                msg = "INVALID BYPASS CREDENTIALS"
+                if delay > 0:
+                    msg += f" \u2014 LOCKED FOR {delay}s"
+                return {"success": False, "message": msg}
+
+            # PIN correct \u2014 auto-migrate legacy SHA-256 to PBKDF2 on success
+            if ":" not in stored_hash:
+                new_hash, _ = _hash_pin(pin)
+                try:
+                    bypass_pin_path.write_text(new_hash, encoding="utf-8")
+                    print("[UI] \u2705 PIN hash migrated from SHA-256 to PBKDF2.")
+                except Exception as mig_exc:
+                    print(f"[UI] PIN migration write failed (non-fatal): {mig_exc}")
+
+            # Decrypt and load keys
+            fernet_key = keystore.load_fernet_key()
+            decrypted_content = keystore.decrypt_env_to_memory(fernet_key)
+            _load_decrypted_env(decrypted_content)
+            os.environ["JARVIS_AUTH_CLEARED"] = "1"
+            _reset_pin_lockout()
+
+            self.ui._auth_passed = True
+            self.ui._js("onAuthSuccess()")
+            threading.Thread(target=self.ui._auth_transition_to_video, daemon=True).start()
+            return {"success": True}
         except Exception as exc:
             print(f"[UI] Decryption via PIN failed: {exc}")
-            return {"success": False, "message": f"DECRYPTION ERROR: {str(exc)}"}
+            return {"success": False, "message": "SYSTEM DECRYPTION FAILURE"}
 
     def submit_command(self, text):
         self.collector.command_count += 1
@@ -771,7 +886,8 @@ class JarvisUI:
             backend = cv2.CAP_DSHOW if _sys.platform == "win32" else cv2.CAP_ANY
             cap = cv2.VideoCapture(0, backend)
             if not cap.isOpened():
-                cap = cv2.VideoCapture(0)  # fallback
+                cap.release()  # Release failed handle before fallback
+                cap = cv2.VideoCapture(0)
             
             if cap.isOpened():
                 # Set ideal resolution properties
@@ -786,7 +902,10 @@ class JarvisUI:
                     break
                 else:
                     cap.release()
+            else:
+                cap.release()  # Release handle that failed to open
             
+            cap = None  # Prevent stale reference on next iteration
             # Update retry loop timer remaining
             elapsed = time.time() - start_cam_init
             remaining = max(0, 5 - int(elapsed))
@@ -795,6 +914,11 @@ class JarvisUI:
 
         # If camera could not be opened, enter secure keyboard-only bypass mode
         if not camera_acquired:
+            if cap is not None:
+                try:
+                    cap.release()
+                except Exception:
+                    pass
             print("[UI] ERROR: Camera sensor occupied or blocked. Triggering secure bypass.")
             self._js("showCameraErrorOverlay()")
             face_engine.shutdown()
@@ -834,18 +958,7 @@ class JarvisUI:
                 fernet_key = keystore.load_fernet_key()
                 decrypted_content = keystore.decrypt_env_to_memory(fernet_key)
                 
-                # Load decrypted content into os.environ
-                for line in decrypted_content.splitlines():
-                    line = line.strip()
-                    if not line or line.startswith("#"):
-                        continue
-                    if "=" in line:
-                        k, v = line.split("=", 1)
-                        k = k.strip()
-                        v = v.strip()
-                        if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
-                            v = v[1:-1]
-                        os.environ[k] = v
+                _load_decrypted_env(decrypted_content)
                 
                 # Set cleared flag so that UI and sub-threads skip login screens
                 os.environ["JARVIS_AUTH_CLEARED"] = "1"
@@ -941,7 +1054,7 @@ class JarvisUI:
                     emb = face_engine.extract_embedding(frame, face)
                     if emb is not None:
                         similarity = face_engine.compute_similarity(emb, golden_sig)
-                        if similarity >= 0.45:
+                        if similarity >= FACE_SIMILARITY_THRESHOLD:
                             match_stable += 1
                             progress = min(40, int((match_stable / stable_match_frames) * 40))
                             self._js(f"onScanProgress({progress}, 'FACE MATCH', {int(similarity * 100)})")
@@ -1059,32 +1172,17 @@ class JarvisUI:
         self._auth_event.set()
 
     def _auth_hardware_skip(self, message: str):
-        """Tier 1 — show amber warning for 3s, then continue."""
-        print(f"[UI] Hardware bypass active: {message}")
-        self._js(f"onHardwareError('{message}')")
-        
-        # Best-effort decryption of keys on hardware failure
-        try:
-            from core.auth import keystore
-            fernet_key = keystore.load_fernet_key()
-            decrypted_content = keystore.decrypt_env_to_memory(fernet_key)
-            for line in decrypted_content.splitlines():
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if "=" in line:
-                    k, v = line.split("=", 1)
-                    k = k.strip()
-                    v = v.strip()
-                    if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
-                        v = v[1:-1]
-                    os.environ[k] = v
-        except Exception as exc:
-            print(f"[UI] Best-effort keystore load during hardware skip failed: {exc}")
+        """Hardware failure path \u2014 always require PIN verification.
 
-        self._auth_passed = True
-        time.sleep(3)
-        self._auth_transition_to_video()
+        Even if keystore decryption would succeed locally, we cannot
+        confirm the user's identity without biometrics. Always show
+        the PIN overlay so the human proves who they are.
+        """
+        print(f"[UI] Hardware bypass: {message}")
+        self._js(f"onHardwareError('{message}')")
+        time.sleep(2)
+        print("[UI] Biometric unavailable \u2014 requiring PIN authentication.")
+        self._js("showCameraErrorOverlay()")
 
     def _js(self, code: str):
         """Execute JavaScript in the window. Silently fails if window gone."""

@@ -23,6 +23,7 @@ Safety Tiers:
   CONFIRM — hand_auth
 """
 
+import json
 from core.tool_registry import tool, SafetyTier
 
 

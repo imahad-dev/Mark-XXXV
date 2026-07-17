@@ -513,8 +513,12 @@ class JarvisLive:
             self._is_speaking = value
         if value:
             self.ui.set_state("SPEAKING")
-        elif not self.ui.muted:
-            self.ui.set_state("LISTENING")
+        else:
+            # Always reset to LISTENING (or STANDBY if muted)
+            if self.ui.muted:
+                self.ui.set_state("STANDBY")
+            else:
+                self.ui.set_state("LISTENING")
 
     def _flush_audio_queue(self):
         """Drop all pending audio chunks to silence Jarvis immediately."""
@@ -528,7 +532,21 @@ class JarvisLive:
             except asyncio.QueueEmpty:
                 break
         if dropped:
-            print(f"[JARVIS] 🔇 Flushed {dropped} audio chunks")
+            print(f"[JARVIS] 🔇 Flushed {dropped} playback chunks")
+
+    def _flush_out_queue(self):
+        """Drain stale mic-audio chunks from the send queue between turns."""
+        if not self.out_queue:
+            return
+        dropped = 0
+        while not self.out_queue.empty():
+            try:
+                self.out_queue.get_nowait()
+                dropped += 1
+            except (asyncio.QueueEmpty, Exception):
+                break
+        if dropped:
+            print(f"[JARVIS] 🔇 Flushed {dropped} stale mic chunks from send queue")
 
     def speak(self, text: str):
         if not self._loop or not self.session:
@@ -651,9 +669,9 @@ class JarvisLive:
                 print("[JARVIS] 🔊 Send task cancelled.")
                 raise
             except Exception as e:
-                # Session may have dropped — log and continue
-                # The reconnect loop in run() will handle reconnection
+                # Session may have dropped — drain queue to prevent permanent saturation
                 print(f"[JARVIS] ⚠️ Send error: {type(e).__name__} — {str(e)[:80]}")
+                self._flush_out_queue()
                 await asyncio.sleep(0.1)
 
     def _trigger_boot_sequence(self):
@@ -751,8 +769,10 @@ class JarvisLive:
                     _drop_count = 0
                 except asyncio.QueueFull:
                     _drop_count += 1
-                    if _drop_count % 50 == 1:
-                        print(f"[JARVIS] ⚠️ Audio queue full — dropped {_drop_count} chunks")
+                    if _drop_count == 1:
+                        print(f"[JARVIS] ⚠️ Audio queue full (size={self.out_queue.maxsize}), dropping mic audio")
+                    elif _drop_count % 100 == 0:
+                        print(f"[JARVIS] ⚠️ Audio queue still full — dropped {_drop_count} consecutive chunks")
 
         try:
             with sd.InputStream(
@@ -800,6 +820,8 @@ class JarvisLive:
 
                         if sc.turn_complete:
                             self.set_speaking(False)
+                            # Drain any stale mic audio that accumulated while JARVIS was speaking
+                            self._flush_out_queue()
 
                             full_in = " ".join(in_buf).strip()
                             if full_in:
@@ -934,7 +956,7 @@ class JarvisLive:
                     self._loop          = asyncio.get_event_loop()
                     # Fresh queues each session — prevents stale audio from prior session
                     self.audio_in_queue = asyncio.Queue()
-                    self.out_queue      = asyncio.Queue(maxsize=10)
+                    self.out_queue      = asyncio.Queue(maxsize=50)
                     self._tool_cancel   = asyncio.Event()
 
                     print("[JARVIS] ✅ Connected.")
@@ -1000,6 +1022,7 @@ def main():
             start_telegram_daemon()
         except Exception as e:
             print(f"[Telegram] ⚠️ Could not start: {e}")
+        main._pre_cleared_bootstrap_done = True
 
     ui = JarvisUI("face.png")
 
@@ -1008,8 +1031,8 @@ def main():
         ui.wait_for_auth()
         print("[JARVIS] ✅ Auth gate cleared — initializing systems...")
 
-        # If not pre-cleared, reload config now that keys are decrypted and loaded
-        if os.environ.get("JARVIS_AUTH_CLEARED") == "1":
+        # If bootstrap has not already run, reload config now that keys are decrypted and loaded
+        if not getattr(main, "_pre_cleared_bootstrap_done", False) and os.environ.get("JARVIS_AUTH_CLEARED") == "1":
             config.reload()
             missing = validate_env()
             if missing:
