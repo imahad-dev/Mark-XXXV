@@ -131,6 +131,17 @@ class Config:
     )
     APPROVED_SESSION_EXPIRY_SEC     = _get_env_float("APPROVED_SESSION_EXPIRY_SEC", 300.0)
 
+    # OS Layer 2 — Phase 4: Long-Term Goal Orchestration
+    GOAL_ORCHESTRATOR_ENABLED       = os.environ.get("GOAL_ORCHESTRATOR_ENABLED", "false").lower() == "true"
+    GOAL_MAX_SUB_GOALS              = _get_env_int("GOAL_MAX_SUB_GOALS", 10)
+    GOAL_MAX_TOTAL_STEPS            = _get_env_int("GOAL_MAX_TOTAL_STEPS", 100)
+    GOAL_STEP_COOLDOWN_SEC          = _get_env_float("GOAL_STEP_COOLDOWN_SEC", 1.0)
+    CONTEXT_COMPRESS_THRESHOLD      = _get_env_int("CONTEXT_COMPRESS_THRESHOLD", 6000)
+    CONTEXT_MAX_COMPRESSION_GEN     = _get_env_int("CONTEXT_MAX_COMPRESSION_GEN", 3)
+    GOAL_SUSPEND_TIMEOUT_SEC        = _get_env_float("GOAL_SUSPEND_TIMEOUT_SEC", 3600.0)
+    GOAL_MAX_COST_USD               = _get_env_float("GOAL_MAX_COST_USD", 1.00)
+    GOAL_MAX_DELEGATION_DEPTH       = _get_env_int("GOAL_MAX_DELEGATION_DEPTH", 3)
+
     # Phase 3 — Document Intelligence
     DOC_INTELLIGENCE_ENABLED    = os.environ.get("DOC_INTELLIGENCE_ENABLED", "false").lower() == "true"
     DOC_INTEL_DEBOUNCE_SEC      = _get_env_float("DOC_INTEL_DEBOUNCE_SEC", 2.0)
@@ -223,6 +234,16 @@ class Config:
             os.path.join(os.path.expanduser("~"), "JarvisWorkspace"),
         )
         cls.APPROVED_SESSION_EXPIRY_SEC     = _get_env_float("APPROVED_SESSION_EXPIRY_SEC", 300.0)
+        # Phase 4 goal orchestration
+        cls.GOAL_ORCHESTRATOR_ENABLED       = os.environ.get("GOAL_ORCHESTRATOR_ENABLED", "false").lower() == "true"
+        cls.GOAL_MAX_SUB_GOALS              = _get_env_int("GOAL_MAX_SUB_GOALS", 10)
+        cls.GOAL_MAX_TOTAL_STEPS            = _get_env_int("GOAL_MAX_TOTAL_STEPS", 100)
+        cls.GOAL_STEP_COOLDOWN_SEC          = _get_env_float("GOAL_STEP_COOLDOWN_SEC", 1.0)
+        cls.CONTEXT_COMPRESS_THRESHOLD      = _get_env_int("CONTEXT_COMPRESS_THRESHOLD", 6000)
+        cls.CONTEXT_MAX_COMPRESSION_GEN     = _get_env_int("CONTEXT_MAX_COMPRESSION_GEN", 3)
+        cls.GOAL_SUSPEND_TIMEOUT_SEC        = _get_env_float("GOAL_SUSPEND_TIMEOUT_SEC", 3600.0)
+        cls.GOAL_MAX_COST_USD               = _get_env_float("GOAL_MAX_COST_USD", 1.00)
+        cls.GOAL_MAX_DELEGATION_DEPTH       = _get_env_int("GOAL_MAX_DELEGATION_DEPTH", 3)
 
     @classmethod
     def is_feature_available(cls, feature: str) -> bool:
@@ -241,6 +262,7 @@ class Config:
             "actuation":           cls.ACTUATION_ENABLED,
             "browser_bridge":      cls.ACTUATION_ENABLED and bool(cls.ALLOWED_EXTENSION_ID),
             "agentic_shell":       cls.ACTUATION_ENABLED,
+            "goal_orchestrator":   cls.GOAL_ORCHESTRATOR_ENABLED,
         }
         return feature_map.get(feature, False)
 

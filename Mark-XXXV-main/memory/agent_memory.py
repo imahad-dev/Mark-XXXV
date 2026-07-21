@@ -52,7 +52,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     result      TEXT DEFAULT NULL,
     error       TEXT DEFAULT NULL,
     max_steps   INTEGER NOT NULL DEFAULT 25,
-    step_count  INTEGER NOT NULL DEFAULT 0
+    step_count  INTEGER NOT NULL DEFAULT 0,
+    compressed_context TEXT DEFAULT NULL,
+    cost_usd    REAL DEFAULT 0.0
 );
 
 CREATE TABLE IF NOT EXISTS episodes (
@@ -80,6 +82,7 @@ CREATE TABLE IF NOT EXISTS steps (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_parent_id ON tasks(parent_id);
 CREATE INDEX IF NOT EXISTS idx_episodes_task ON episodes(task_id);
 CREATE INDEX IF NOT EXISTS idx_steps_episode ON steps(episode_id);
 CREATE INDEX IF NOT EXISTS idx_steps_task ON steps(task_id);
@@ -125,6 +128,8 @@ class Task:
     error: Optional[str] = None
     max_steps: int = 25
     step_count: int = 0
+    compressed_context: Optional[str] = None
+    cost_usd: float = 0.0
 
 
 @dataclass
@@ -169,6 +174,21 @@ class _ConnectionPool:
             with self._lock:
                 if not self._initialized:
                     conn.executescript(_SCHEMA_SQL)
+                    try:
+                        conn.execute("ALTER TABLE tasks ADD COLUMN compressed_context TEXT DEFAULT NULL")
+                        conn.commit()
+                    except sqlite3.OperationalError:
+                        pass
+                    try:
+                        conn.execute("ALTER TABLE tasks ADD COLUMN cost_usd REAL DEFAULT 0.0")
+                        conn.commit()
+                    except sqlite3.OperationalError:
+                        pass
+                    try:
+                        conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_parent_id ON tasks(parent_id)")
+                        conn.commit()
+                    except sqlite3.OperationalError:
+                        pass
                     self._initialized = True
 
     def get(self) -> sqlite3.Connection:
@@ -241,6 +261,7 @@ class AgentMemory:
         context: Optional[dict] = None,
         parent_id: Optional[str] = None,
         max_steps: int = 25,
+        cost_usd: float = 0.0,
     ) -> Task:
         now = time.time()
         task = Task(
@@ -253,16 +274,18 @@ class AgentMemory:
             context=context or {},
             parent_id=parent_id,
             max_steps=max_steps,
+            cost_usd=cost_usd,
         )
         with _transaction() as conn:
             conn.execute(
                 """INSERT INTO tasks
                    (id, goal, status, priority, created_at, updated_at,
-                    context, parent_id, max_steps)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    context, parent_id, max_steps, cost_usd)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (task.id, task.goal, task.status, task.priority,
                  task.created_at, task.updated_at,
-                 json.dumps(task.context), task.parent_id, task.max_steps),
+                 json.dumps(task.context), task.parent_id, task.max_steps,
+                 task.cost_usd),
             )
         print(f"[AgentMemory] Task created: {task.id} -> {goal[:60]}")
         return task
@@ -281,14 +304,15 @@ class AgentMemory:
         result: Optional[str] = None,
         error: Optional[str] = None,
     ) -> None:
+        status_val = status.value if hasattr(status, "value") else str(status)
         with _transaction() as conn:
             conn.execute(
                 """UPDATE tasks
                    SET status = ?, updated_at = ?, result = ?, error = ?
                    WHERE id = ?""",
-                (status, time.time(), result, error, task_id),
+                (status_val, time.time(), result, error, task_id),
             )
-        print(f"[AgentMemory] Task {task_id} -> {status}")
+        print(f"[AgentMemory] Task {task_id} -> {status_val}")
 
     def increment_steps(self, task_id: str) -> int:
         """Increment step_count, return new count."""
@@ -318,6 +342,23 @@ class AgentMemory:
         rows = conn.execute(
             "SELECT * FROM tasks ORDER BY updated_at DESC LIMIT ?",
             (limit,),
+        ).fetchall()
+        return [self._row_to_task(r) for r in rows]
+
+    def update_task_cost(self, task_id: str, cost: float) -> None:
+        """Set or update the task's cost_usd in the database."""
+        with _transaction() as conn:
+            conn.execute(
+                "UPDATE tasks SET cost_usd = ?, updated_at = ? WHERE id = ?",
+                (cost, time.time(), task_id),
+            )
+
+    def get_children(self, parent_id: str) -> list[Task]:
+        """Fetch all child tasks for a given parent task ID, ordered by created_at."""
+        conn = _pool.get()
+        rows = conn.execute(
+            "SELECT * FROM tasks WHERE parent_id = ? ORDER BY created_at ASC",
+            (parent_id,),
         ).fetchall()
         return [self._row_to_task(r) for r in rows]
 
@@ -438,6 +479,25 @@ class AgentMemory:
         return [self._row_to_step(r) for r in rows]
 
     # ── Context helpers ──────────────────────────────────────────────────
+
+    def save_compressed_context(self, task_id: str, compressed: str) -> None:
+        """Persist compressed scratchpad summary for cross-session resumption."""
+        with _transaction() as conn:
+            conn.execute(
+                "UPDATE tasks SET compressed_context = ?, updated_at = ? WHERE id = ?",
+                (compressed, time.time(), task_id),
+            )
+        print(f"[AgentMemory] Saved compressed context for task {task_id}")
+
+    def get_compressed_context(self, task_id: str) -> Optional[str]:
+        """Load compressed context for a resumed task."""
+        conn = _pool.get()
+        row = conn.execute(
+            "SELECT compressed_context FROM tasks WHERE id = ?", (task_id,)
+        ).fetchone()
+        if not row:
+            return None
+        return row["compressed_context"]
 
     def update_context(self, task_id: str, updates: dict) -> None:
         """Merge new key/value pairs into a task's context blob."""
@@ -582,19 +642,22 @@ class AgentMemory:
 
     @staticmethod
     def _row_to_task(row: sqlite3.Row) -> Task:
+        row_dict = dict(row)
         return Task(
-            id=row["id"],
-            goal=row["goal"],
-            status=row["status"],
-            priority=row["priority"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-            context=json.loads(row["context"] or "{}"),
-            parent_id=row["parent_id"],
-            result=row["result"],
-            error=row["error"],
-            max_steps=row["max_steps"],
-            step_count=row["step_count"],
+            id=row_dict["id"],
+            goal=row_dict["goal"],
+            status=row_dict["status"],
+            priority=row_dict["priority"],
+            created_at=row_dict["created_at"],
+            updated_at=row_dict["updated_at"],
+            context=json.loads(row_dict.get("context") or "{}"),
+            parent_id=row_dict.get("parent_id"),
+            result=row_dict.get("result"),
+            error=row_dict.get("error"),
+            max_steps=row_dict.get("max_steps", 25),
+            step_count=row_dict.get("step_count", 0),
+            compressed_context=row_dict.get("compressed_context"),
+            cost_usd=row_dict.get("cost_usd", 0.0),
         )
 
     @staticmethod

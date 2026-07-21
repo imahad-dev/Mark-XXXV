@@ -30,6 +30,7 @@ graphify-out/
 session_*.jsonl
 
 # SQLite WAL/journal sidecars (runtime, never commit)
+*.db
 *.db-shm
 *.db-wal
 *.db-journal

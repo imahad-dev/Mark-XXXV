@@ -107,12 +107,14 @@ class ReactAgent:
         max_steps: int = DEFAULT_MAX_STEPS,
         speak: Optional[Callable] = None,
         cancel_flag: Optional[threading.Event] = None,
+        delegation_depth: int = 0,
     ):
         self._max_steps = max_steps
         self._speak = speak
         self._cancel_flag = cancel_flag or threading.Event()
         self._scratchpad: list[dict] = []  # [{role, content}] conversation history
         self._step_count = 0
+        self._delegation_depth = delegation_depth
 
     # ── Public entry point ────────────────────────────────────────────────
 
@@ -133,10 +135,30 @@ class ReactAgent:
 
         # Persistence: create or resume task
         task = mem.get_or_resume_task(goal, max_steps=self._max_steps)
+        if task.context and "delegation_depth" in task.context:
+            self._delegation_depth = task.context["delegation_depth"]
         episode = mem.start_episode(
             task.id,
             plan=[s.get("description", "") for s in initial_plan] if initial_plan else [],
         )
+
+        # Seed scratchpad with pinned facts
+        self._scratchpad.insert(0, {
+            "role": "pinned_facts",
+            "content": f"GOAL: {goal}\nTASK_ID: {task.id}\nEPISODE_ID: {episode.id}",
+            "pinned": True,
+        })
+        self._current_task_id = task.id
+        self._parent_goal_id = task.parent_id
+
+        # Load compressed context if resuming existing task
+        compressed = mem.get_compressed_context(task.id)
+        if compressed:
+            self._scratchpad.append({
+                "role": "compressed_context",
+                "content": f"[Previous steps summary]\n{compressed}",
+                "compression_gen": 1,
+            })
 
         # Seed scratchpad with plan context if available
         if initial_plan:
@@ -234,6 +256,7 @@ class ReactAgent:
         Returns AgentAction, AgentFinish, or None on parse failure.
         """
         from core.llm_orchestrator import LLMOrchestrator, TaskTier
+        from core.credit_tracker import CreditTracker
 
         orchestrator = LLMOrchestrator()
         tool_descriptions = self._build_tool_descriptions()
@@ -267,6 +290,22 @@ class ReactAgent:
                 system_instruction=system,
             )
             raw = response.text.strip()
+
+            # Attribute costs to CreditTracker for goal budget enforcement
+            ct = CreditTracker()
+            usage = getattr(response, "usage_metadata", None)
+            if usage and hasattr(usage, "total_token_count") and usage.total_token_count:
+                tokens = usage.total_token_count
+            else:
+                tokens = (len(system) + len(prompt) + len(raw)) // 4
+
+            t_id = getattr(self, "_current_task_id", None)
+            p_id = getattr(self, "_parent_goal_id", None)
+            if t_id:
+                ct.log_for_goal(t_id, "gemini_flash", tokens=tokens)
+            if p_id:
+                ct.log_for_goal(p_id, "gemini_flash", tokens=tokens)
+
             return self._parse_llm_output(raw)
 
         except Exception as exc:
@@ -312,6 +351,7 @@ class ReactAgent:
                 tool_name,
                 tool_args,
                 speak=self._speak,
+                _delegation_depth=self._delegation_depth,
             )
             truncated = str(result)[:SCRATCHPAD_TRUNCATE_CHARS]
             print(f"[ReAct] Result: {truncated[:120]}...")
@@ -328,14 +368,143 @@ class ReactAgent:
 
     def _observe(self, action: AgentAction, observation: str) -> None:
         """Append the action + observation pair to the scratchpad."""
+        obs_entry = {
+            "role": "observation",
+            "content": observation[:SCRATCHPAD_TRUNCATE_CHARS],
+        }
+        if observation.startswith("PINNED:"):
+            obs_entry["pinned"] = True
+
         self._scratchpad.append({
             "role": "action",
             "content": f"Tool: {action.tool} | Args: {json.dumps(action.tool_input)[:200]}",
         })
-        self._scratchpad.append({
-            "role": "observation",
-            "content": observation[:SCRATCHPAD_TRUNCATE_CHARS],
-        })
+        self._scratchpad.append(obs_entry)
+
+        # Trigger context compression check
+        self._maybe_compress_context()
+
+    def _maybe_compress_context(self) -> None:
+        """
+        Map-reduce context compression:
+        If scratchpad total length > CONTEXT_COMPRESS_THRESHOLD:
+          1. Separate pinned entries from compressible entries.
+          2. Take oldest 70% of compressible entries.
+          3. Filter out entries with compression_gen >= CONTEXT_MAX_COMPRESSION_GEN.
+          4. Split remaining text into 3500-char chunks (MAP).
+          5. Summarize each chunk with ROUTING tier LLM.
+          6. Combine chunk summaries if >1 (REDUCE).
+          7. Replace compressed range with the new summary.
+          8. Persist to AgentMemory.
+        """
+        from core.config import config
+        from core.credit_tracker import CreditTracker
+        threshold = getattr(config, "CONTEXT_COMPRESS_THRESHOLD", 6000)
+        max_gen = getattr(config, "CONTEXT_MAX_COMPRESSION_GEN", 3)
+
+        total_chars = sum(len(e.get("content", "")) for e in self._scratchpad)
+        if total_chars < threshold:
+            return
+
+        pinned = [e for e in self._scratchpad if e.get("pinned")]
+        compressible = [e for e in self._scratchpad if not e.get("pinned")]
+
+        if not compressible:
+            return
+
+        split_idx = int(len(compressible) * 0.7)
+        if split_idx <= 0:
+            return
+
+        old_entries = compressible[:split_idx]
+        recent_entries = compressible[split_idx:]
+
+        to_compress = []
+        already_maxed = []
+        for e in old_entries:
+            gen = e.get("compression_gen", 0)
+            if gen >= max_gen:
+                already_maxed.append(e)
+            else:
+                to_compress.append(e)
+
+        if not to_compress:
+            return
+
+        old_text = "\n".join(f"[{e['role']}] {e['content']}" for e in to_compress)
+        chunk_size = 3500
+        chunks = [old_text[i:i + chunk_size] for i in range(0, len(old_text), chunk_size)]
+
+        from core.llm_orchestrator import LLMOrchestrator, TaskTier
+        orchestrator = LLMOrchestrator()
+        ct = CreditTracker()
+        t_id = getattr(self, "_current_task_id", None)
+        p_id = getattr(self, "_parent_goal_id", None)
+
+        try:
+            chunk_summaries = []
+            for chunk in chunks:
+                prompt = (
+                    "Compress this execution log into a concise paragraph. Preserve:\n"
+                    "- Key facts, data values, and file paths discovered\n"
+                    "- Actions taken and their outcomes (success/failure)\n"
+                    "- Error messages and how they were resolved\n"
+                    "Omit verbose tool output. Be concise but accurate.\n\n"
+                    f"{chunk}"
+                )
+                resp = orchestrator.generate_content_with_retry(TaskTier.ROUTING, prompt)
+                summary_text = resp.text.strip()
+                chunk_summaries.append(summary_text)
+
+                # Attribute compression LLM call costs
+                tokens = (len(prompt) + len(summary_text)) // 4
+                if t_id:
+                    ct.log_for_goal(t_id, "gemini_lite", tokens=tokens)
+                if p_id:
+                    ct.log_for_goal(p_id, "gemini_lite", tokens=tokens)
+
+            if len(chunk_summaries) > 1:
+                combined = "\n\n".join(chunk_summaries)
+                reduce_prompt = (
+                    "Combine these summaries into one coherent paragraph. "
+                    "Remove any redundancy. Preserve all key facts.\n\n"
+                    f"{combined}"
+                )
+                resp = orchestrator.generate_content_with_retry(TaskTier.ROUTING, reduce_prompt)
+                final_summary = resp.text.strip()
+
+                tokens = (len(reduce_prompt) + len(final_summary)) // 4
+                if t_id:
+                    ct.log_for_goal(t_id, "gemini_lite", tokens=tokens)
+                if p_id:
+                    ct.log_for_goal(p_id, "gemini_lite", tokens=tokens)
+            else:
+                final_summary = chunk_summaries[0]
+
+            highest_gen = max((e.get("compression_gen", 0) for e in to_compress), default=0)
+            new_gen = highest_gen + 1
+
+            self._scratchpad = (
+                pinned
+                + already_maxed
+                + [{
+                    "role": "compressed_context",
+                    "content": f"[Previous steps summary] {final_summary}",
+                    "compression_gen": new_gen,
+                }]
+                + recent_entries
+            )
+
+            print(f"[ReAct] Context compressed: gen={new_gen}, len={len(final_summary)}")
+
+            # Persist summary if task_id is available
+            task_id = getattr(self, "_current_task_id", None)
+            if task_id:
+                from memory.agent_memory import get_agent_memory
+                get_agent_memory().save_compressed_context(task_id, final_summary)
+
+        except Exception as exc:
+            print(f"[ReAct] Context compression warning: {exc}")
 
     # ── Error recovery ────────────────────────────────────────────────────
 

@@ -122,6 +122,14 @@ class EventType(str, Enum):
     SHELL_TIMEOUT_RECOVERY      = "shell.timeout_recovery"
     SHELL_COMMAND_EXECUTED       = "shell.command_executed"
 
+    # Goal Orchestration events (OS Layer 2 — Phase 4)
+    GOAL_STARTED            = "goal.started"
+    GOAL_PROGRESS           = "goal.progress"
+    GOAL_SUSPENDED          = "goal.suspended"
+    GOAL_APPROVAL           = "goal.approval"
+    GOAL_COMPLETED          = "goal.completed"
+    GOAL_FAILED             = "goal.failed"
+
     # Custom / extension events
     CUSTOM                  = "custom"
 

@@ -1166,6 +1166,27 @@ def main():
                 print(f"[AgenticShell] ⚠️ Could not start: {sh_err}")
         # ── END Actuation Engine + Browser Bridge + Shell ──────────────────
 
+        # ── Goal Orchestration (Phase 4 — Long-Term Goal Loop) ─────────
+        if getattr(config, "GOAL_ORCHESTRATOR_ENABLED", False):
+            try:
+                from os_layer.parallel_engine import get_parallel_engine
+                from os_layer.goal_orchestrator import get_goal_orchestrator
+                from os_layer.event_bus import get_event_bus, EventType
+
+                get_parallel_engine().start()
+
+                _goal_orch = get_goal_orchestrator()
+                _goal_orch.set_speak(jarvis.speak)
+                _goal_orch.start()
+
+                _bus = get_event_bus()
+                _bus.subscribe(_goal_orch.resume_goal, event_types={EventType.GOAL_APPROVAL})
+
+                print("[JARVIS] 🎯 Goal Orchestrator active")
+            except Exception as go_err:
+                print(f"[GoalOrchestrator] ⚠️ Could not start: {go_err}")
+        # ── END Goal Orchestration ───────────────────────────────────────
+
         try:
             asyncio.run(jarvis.run())
         except KeyboardInterrupt:
@@ -1179,6 +1200,19 @@ def main():
                     print("[JARVIS] 💾 Workspace state saved.")
                 except Exception as ws_err:
                     print(f"[JARVIS] ⚠️ Workspace save failed: {ws_err}")
+
+            # Phase 4 Goal Orchestration shutdown
+            if getattr(config, "GOAL_ORCHESTRATOR_ENABLED", False):
+                try:
+                    from os_layer.goal_orchestrator import get_goal_orchestrator
+                    get_goal_orchestrator().stop()
+                except Exception:
+                    pass
+                try:
+                    from os_layer.parallel_engine import get_parallel_engine
+                    get_parallel_engine().stop()
+                except Exception:
+                    pass
 
             # Actuation first (drains queues and stops running executions)
             if getattr(config, "ACTUATION_ENABLED", False):

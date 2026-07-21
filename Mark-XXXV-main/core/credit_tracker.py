@@ -64,6 +64,7 @@ class CreditTracker:
         self._calls: dict[str, int] = {k: 0 for k in _COST_TABLE}
         self._session_cost: float = 0.0
         self._total_saved: float = 0.0
+        self._goal_costs: dict[str, float] = {}
         self._initialized = True
 
     # ── Logging ───────────────────────────────────────────────────
@@ -78,6 +79,36 @@ class CreditTracker:
             self._calls[source] = self._calls.get(source, 0) + 1
             self._session_cost += actual_cost
             self._total_saved += (gemini_cost - actual_cost)
+
+    def log_for_goal(self, goal_id: str, source: str, tokens: int = 1000) -> None:
+        """Log a query attributed to a specific goal."""
+        self.log(source, tokens)
+        with self._lock:
+            cost_per_k = _COST_TABLE.get(source, 0.0)
+            actual_cost = cost_per_k * (tokens / 1000)
+            from memory.agent_memory import get_agent_memory
+            mem = get_agent_memory()
+            task = mem.get_task(goal_id)
+            current_db_cost = task.cost_usd if task else 0.0
+            new_cost = current_db_cost + actual_cost
+            self._goal_costs[goal_id] = new_cost
+            if task:
+                mem.update_task_cost(goal_id, new_cost)
+
+    def get_goal_cost(self, goal_id: str) -> float:
+        """Return cumulative cost for a specific goal."""
+        with self._lock:
+            if goal_id not in self._goal_costs:
+                from memory.agent_memory import get_agent_memory
+                task = get_agent_memory().get_task(goal_id)
+                if task:
+                    self._goal_costs[goal_id] = task.cost_usd
+            return self._goal_costs.get(goal_id, 0.0)
+
+    def clear_goal(self, goal_id: str) -> None:
+        """Remove goal cost tracking when goal completes."""
+        with self._lock:
+            self._goal_costs.pop(goal_id, None)
 
     # ── UI data ───────────────────────────────────────────────────
 

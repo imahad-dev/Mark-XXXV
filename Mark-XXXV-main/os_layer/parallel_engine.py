@@ -106,6 +106,51 @@ class ParallelAgentEngine:
         self._max_workers = min(max_workers or hard_ceiling, hard_ceiling)
         self._cancel_event = cancel_event or threading.Event()
         self._active_futures: list[Future] = []
+        self._pool: ThreadPoolExecutor | None = None
+        self._lock = threading.Lock()
+
+    def start(self) -> None:
+        """Start the shared ThreadPoolExecutor pool."""
+        with self._lock:
+            if self._pool is None:
+                self._pool = ThreadPoolExecutor(
+                    max_workers=self._max_workers,
+                    thread_name_prefix="parallel-agent",
+                )
+                logger.info(f"[ParallelEngine] Pool started with max_workers={self._max_workers}")
+
+    def stop(self) -> None:
+        """Stop the pool and cancel pending futures."""
+        with self._lock:
+            if self._pool is not None:
+                self._pool.shutdown(wait=False, cancel_futures=True)
+                self._pool = None
+                logger.info("[ParallelEngine] Pool stopped")
+
+    def submit_task(
+        self,
+        task: SubTask,
+        executor_fn: Callable[[SubTask, threading.Event], str],
+    ) -> Future:
+        """Submit a single task to the shared pool. Returns a Future."""
+        is_nested = threading.current_thread().name.startswith("parallel-agent") or (
+            task.context and task.context.get("delegation_depth", 0) > 0
+        )
+        if is_nested:
+            nested_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="parallel-agent-nested")
+            fut = nested_pool.submit(self._execute_with_retry, task, executor_fn)
+            nested_pool.shutdown(wait=False)
+            return fut
+
+        with self._lock:
+            if self._pool is None:
+                self.start()
+            pool = self._pool
+            return pool.submit(
+                self._execute_with_retry,
+                task,
+                executor_fn,
+            )
 
     def execute_concurrently(
         self,
@@ -130,10 +175,22 @@ class ParallelAgentEngine:
         results: list[SubTaskResult] = []
         start_time = time.monotonic()
 
-        with ThreadPoolExecutor(
-            max_workers=self._max_workers,
-            thread_name_prefix="parallel-agent",
-        ) as pool:
+        is_nested = threading.current_thread().name.startswith("parallel-agent") or any(
+            t.context and t.context.get("delegation_depth", 0) > 0 for t in tasks
+        )
+
+        with self._lock:
+            if is_nested or self._pool is None:
+                use_temp_pool = True
+                pool = ThreadPoolExecutor(
+                    max_workers=self._max_workers,
+                    thread_name_prefix="parallel-agent-nested" if is_nested else "parallel-agent",
+                )
+            else:
+                use_temp_pool = False
+                pool = self._pool
+
+        try:
             future_to_task: dict[Future, SubTask] = {}
 
             for task in tasks:
@@ -167,6 +224,9 @@ class ParallelAgentEngine:
                         success=False,
                         error=f"Unhandled: {type(exc).__name__}: {exc}",
                     ))
+        finally:
+            if use_temp_pool and pool:
+                pool.shutdown(wait=True)
 
         total_ms = int((time.monotonic() - start_time) * 1000)
         cancelled = self._cancel_event.is_set()
@@ -253,3 +313,19 @@ class ParallelAgentEngine:
             error="Max retries exhausted",
             duration_ms=int((time.monotonic() - start) * 1000),
         )
+
+
+# ── Singleton ────────────────────────────────────────────────────────────────
+
+_instance: Optional[ParallelAgentEngine] = None
+_instance_lock = threading.Lock()
+
+
+def get_parallel_engine() -> ParallelAgentEngine:
+    """Thread-safe singleton accessor. Enforces one global MAX_CONCURRENT_AGENTS ceiling."""
+    global _instance
+    if _instance is None:
+        with _instance_lock:
+            if _instance is None:
+                _instance = ParallelAgentEngine()
+    return _instance

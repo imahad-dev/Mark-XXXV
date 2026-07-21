@@ -1614,9 +1614,10 @@ def _parallel_orchestrate(parameters=None, speak=None, **kw):
         )
         return agent.run(goal=task.description)
 
-    # Create engine with a fresh cancel event for this orchestration
-    cancel_event = _threading.Event()
-    engine = ParallelAgentEngine(cancel_event=cancel_event)
+    # Use shared engine singleton to enforce global MAX_CONCURRENT_AGENTS ceiling
+    from os_layer.parallel_engine import get_parallel_engine
+    engine = get_parallel_engine()
+    engine.start()
 
     if speak:
         speak(f"Launching {len(tasks)} parallel sub-tasks, sir.")
@@ -1633,5 +1634,100 @@ def _parallel_orchestrate(parameters=None, speak=None, **kw):
         lines.append(f"\n{status} [{r.task_id}] ({r.duration_ms}ms):\n{content}")
 
     return "\n".join(lines)
+
+
+# ── 26. delegate_task ─────────────────────────────────────────────────────────
+
+@tool(
+    name="delegate_task",
+    description="Delegate a sub-task to a background agent. Use for independent work units.",
+    parameters={
+        "type": "OBJECT",
+        "properties": {
+            "description": {
+                "type": "STRING",
+                "description": "Natural language description of what the background sub-agent should accomplish"
+            }
+        },
+        "required": ["description"]
+    },
+    safety=SafetyTier.NOTIFY,
+)
+def _delegate_task(parameters=None, speak=None, **kw):
+    import time
+    from core.config import config
+    from os_layer.parallel_engine import get_parallel_engine, SubTask
+
+    params = parameters or {}
+    description = params.get("description", "")
+    if not description:
+        return "ERROR: Missing 'description' parameter."
+
+    current_depth = kw.get("_delegation_depth", 0)
+    max_depth = getattr(config, "GOAL_MAX_DELEGATION_DEPTH", 3)
+    if current_depth >= max_depth:
+        return f"ERROR: Maximum delegation depth ({max_depth}) reached. Execute this sub-task directly instead of delegating."
+
+    engine = get_parallel_engine()
+    engine.start()
+
+    sub_task = SubTask(
+        id=f"del_{int(time.time())}",
+        description=description,
+        context={"delegation_depth": current_depth + 1},
+    )
+
+    import threading as _threading
+
+    def _executor_wrapper(st: SubTask, evt: _threading.Event) -> str:
+        from agent.react_agent import ReactAgent
+        agent = ReactAgent(max_steps=10, speak=None, cancel_flag=evt, delegation_depth=current_depth + 1)
+        return agent.run(goal=st.description)
+
+    future = engine.submit_task(sub_task, _executor_wrapper)
+
+    if speak:
+        speak(f"Delegating task: {description[:40]}")
+
+    try:
+        res = future.result(timeout=300)
+        return f"Delegated task completed: {res}"
+    except Exception as exc:
+        return f"Delegated task failed or timed out: {exc}"
+
+
+# ── 27. goal_status ──────────────────────────────────────────────────────────
+
+@tool(
+    name="goal_status",
+    description="Check the status of a long-running goal or list all active goals.",
+    parameters={
+        "type": "OBJECT",
+        "properties": {
+            "goal_id": {
+                "type": "STRING",
+                "description": "Optional goal ID. If omitted, lists all active goals."
+            }
+        },
+        "required": []
+    },
+    safety=SafetyTier.SAFE,
+)
+def _goal_status(parameters=None, **kw):
+    from os_layer.goal_orchestrator import get_goal_orchestrator
+    params = parameters or {}
+    goal_id = params.get("goal_id", "")
+    orch = get_goal_orchestrator()
+
+    if goal_id:
+        status_dict = orch.get_goal_status(goal_id)
+        return json.dumps(status_dict, indent=2)
+
+    # Return active tasks summary
+    from memory.agent_memory import get_agent_memory
+    mem = get_agent_memory()
+    summary = mem.get_active_summary()
+    return summary if summary else "No active long-term goals."
+
 
 

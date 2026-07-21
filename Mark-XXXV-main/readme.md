@@ -1,73 +1,101 @@
-# 🤖 MARK XXXV
+# 🤖 MARK XXXV — Enterprise Autonomous Voice & OS Intelligence System
 
-**Watch The Detailed Video To Set-up This Model**: https://www.youtube.com/watch?v=BhOsnGC_sAA
+### Next-Generation Autonomous AI Assistant — By [imahad-dev](https://github.com/imahad-dev)
 
-### Next-Generation Personal AI Assistant — By FatihMakes
+**MARK XXXV** is a real-time, voice-driven autonomous AI agent and OS intelligence system designed to hear, see, reason, plan, and control your Windows computer.
 
-A real-time voice AI that can hear, see, understand, and control your Windows computer.
-Local execution. Zero subscriptions (unless you want to increase requests via Google AI Studio).
-Built for intelligent automation.
----
-## ✨ Overview
-
-**MARK XXXV** is an advanced voice-driven AI assistant designed to turn your computer into an interactive intelligent system.
-Speak naturally — it listens, understands context, responds with a human-like voice, and executes tasks across your system automatically.
-Designed for speed, autonomy, and real-world usability.
----
-## 🚀 Capabilities
-
-### Core
-* **Real-time voice interaction** — Natural conversation with instant response in any language
-* **System control** — Launch apps, manage files, execute terminal commands
-* **Autonomous task execution** — Plans and completes complex multi-step workflows
-* **Visual awareness** — Full screen analysis and webcam understanding
-* **Persistent memory** — Learns your name, preferences, projects, relationships and remembers them across sessions
-* **Mute button** — Click or press F4 to instantly silence the microphone (useful when talking to others nearby)
-* **Keyboard input** — Type commands directly from the UI without speaking
+Built with enterprise-grade multi-agent concurrency, persistent task memory, automatic context compression, and continuous background goal execution, MARK XXXV operates with near-zero latency while maintaining strict cost ceilings and safety gates.
 
 ---
-## 🆕 What's New in XXXV
 
-* 🎮 Steam & Epic Games integration — install, update, schedule, auto-shutdown
-* 🔇 Mute button (F4 / click) — no more Jarvis picking up side conversations
-* ⌨️ Keyboard input on UI — type commands without speaking
-* 🧠 Smarter memory — saves favorites, projects, relationships, plans automatically
-* 🌐 Incognito browser support
-* 🔊 Error reporting — tool failures spoken aloud
-* 🔁 Status indicator — LISTENING / SPEAKING / THINKING / MUTED states on UI
-* ⚡ Faster response — removed unnecessary round-trips before tool calls
-* 👨‍🔧 Fixed errors — removed some errors and bugs.
+## ✨ System Architecture & Key Capabilities
+
+### 🧠 1. Long-Term Goal Loop & Background Orchestration (`GoalOrchestrator`)
+- **Continuous Multi-Hour Goal Execution**: Automatically decomposes high-level user goals into structured sub-tasks and executes them sequentially in the background.
+- **Dedicated Dispatch Queue**: Background goals bypass interactive user queues to guarantee zero latency during live voice interaction.
+- **Safety Ceilings & Human-in-the-Loop**: Enforces per-goal cost ceilings (`GOAL_MAX_COST_USD`), maximum sub-goal limits (`GOAL_MAX_SUB_GOALS`), and recursive delegation depth caps (`GOAL_MAX_DELEGATION_DEPTH`).
+- **Suspension & Resumption**: Automatically pauses goals for human approval when safety thresholds or confirmation gates are hit, resuming cleanly via EventBus events.
+
+### ⚡ 2. Autonomous ReAct Agent & Context Compression (`ReactAgent`)
+- **Reasoning + Acting Loop**: Step-by-step THINK-ACT-OBSERVE execution cycle with structured JSON output and automated self-correction error handling.
+- **Dynamic Fact Pinning**: Preserves critical task facts (goals, task IDs, key discoveries) across infinite turns without truncation.
+- **Map-Reduce Context Compression**: Summarizes execution scratchpads exceeding token thresholds, persisting compressed context checkpoints to SQLite for crash recovery and cross-session resumption.
+
+### 🛡️ 3. Global Concurrency & Resource Pooling (`ParallelAgentEngine`)
+- **Global Concurrency Ceiling**: Thread-safe singleton enforcing system-wide agent concurrency ceilings (`MAX_CONCURRENT_AGENTS`) to guarantee API rate-limit headroom.
+- **Deadlock-Free Execution**: Automatically isolates nested and delegated sub-tasks into dedicated worker pools.
+- **Exponential Backoff**: Resilient retry strategies with jitter for network and API rate-limiting recovery.
+
+### 💾 4. Multi-Day Persistent Memory & Cost Accounting (`AgentMemory` & `CreditTracker`)
+- **WAL-Mode SQLite Persistence**: Durable database tracking for tasks, episodes, steps, and execution outcomes (`agent_episodes.db`).
+- **Per-Goal USD Budget Ledger**: Real-time token usage attribution and persistent goal cost tracking.
+- **Session Workspace State**: Save and restore active workspace states, tasks, and memory briefings across reboots.
+
+### 🐚 5. Persistent Agentic Shell (`AgenticShell`)
+- **Background PowerShell Session**: Persistent, state-retaining terminal runner for executing system commands, scripts, and build tools.
+- **Command Security Classification**: Automatic risk categorization (File Operations, Build Tools, Network Calls) with security validation.
+
+### 👁️ 6. Screen & OS Intelligence (`ScreenIntel` & `WindowManager`)
+- **Visual Awareness & OCR**: Full screen context analysis, layout mapping, and active window monitoring.
+- **Window Management**: Process discovery, layout saving/restoration, and resource-hog identification.
+
+### 🎙️ 7. Real-time Voice & Multimodal Interaction (`JarvisLive` & HUD)
+- **Zero-Latency Gemini Live Integration**: Bidirectional WebSocket audio streaming for natural conversation.
+- **Dual VAD & Speech Recognition**: Silero VAD coupled with Faster Whisper (and Vosk offline fallback).
+- **Interactive Cybernetic HUD**: Pygame and Webview interfaces displaying real-time agent status (`LISTENING`, `SPEAKING`, `THINKING`, `MUTED`), visual telemetry, Mute toggle (`F4`), and instant text input console.
 
 ---
-## ⚡ Quick Start
+
+## ⚡ Quick Start Guide
+
+### Prerequisites
+* **Operating System**: Windows 10 / 11
+* **Python**: Python 3.11 or 3.12
+* **Hardware**: Microphone & Speakers
+* **API Key**: Free [Gemini API Key](https://aistudio.google.com/apikey)
+
+### Installation
 
 ```bash
-git clone https://github.com/FatihMakes/Mark-XXXV.git
+# Clone the repository
+git clone https://github.com/imahad-dev/Mark-XXXV.git
 cd Mark-XXXV
+
+# Install dependencies
 pip install -r requirements.txt
 playwright install
+
+# Launch MARK XXXV
 python main.py
 ```
 
-Enter your free Gemini API key on first launch.
-System ready in minutes.
+Enter your Gemini API key when prompted on first launch.
+
 ---
-## 📋 Requirements
 
-* Windows 10 / 11
-* Python 3.11 or 3.12
-* Microphone
-* Free [Gemini API key](https://aistudio.google.com/apikey)
+## 🎮 Key Controls & Hotkeys
+
+| Control | Action | Description |
+| :--- | :--- | :--- |
+| **F4 / UI Click** | Mute Microphone | Instantly silences audio input to prevent background conversation triggers |
+| **Console Bar** | Text Input | Type direct text commands to the agent without speaking |
+| **GUI Dashboard** | Status HUD | Monitor live agent states (`LISTENING`, `THINKING`, `SPEAKING`, `MUTED`) and cost tracking |
+
 ---
-## ⚠️ License
 
-Personal and non-commercial use only.
-Licensed under **Creative Commons BY-NC 4.0**.
+## 🔒 Security & Safety Design
 
-Engineered by a 17-year-old building a real JARVIS-style assistant.
-⭐ Star the repository to support the project.
+- **Local Storage**: All session data, task logs, SQLite databases, and encrypted credentials remain 100% on your local machine.
+- **Delegation Guardrails**: Hard limits on delegation depth prevent runaway sub-agent recursion.
+- **Budget Protection**: Per-goal cost limits automatically suspend background tasks before exceeding dollar budgets.
+
 ---
-If you have questions, issues, or just want to say hi:
 
-* YouTube: [@FatihMakes](https://www.youtube.com/@FatihMakes)
-* Instagram: [@fatihmakes](https://www.instagram.com/fatihmakes/)
+## 🧑‍💻 Author & Support
+
+Developed, expanded, and maintained by **imahad-dev**.
+
+* **GitHub**: [https://github.com/imahad-dev](https://github.com/imahad-dev)
+* **Instagram**: [https://www.instagram.com/mahad_.x1/](https://www.instagram.com/mahad_.x1/)
+
+⭐ **Star the repository** to support ongoing development!
