@@ -190,7 +190,7 @@ Built from the ground up for power users, engineers, and enterprise automation, 
 | :--- | :--- | :--- |
 | **`F4` Key** | Audio Pipeline | **Instant Mic Mute**: Instantly silences audio intake when someone enters your room |
 | **GUI Mute Button** | Status HUD | Clickable indicator toggling microphone listening state |
-| **Bottom Input Bar** | Command Console | **Text Fallback**: Type direct text commands to the agent without speaking aloud |
+| **Bottom Input Bar** | Command Console | **Text Fallback**: Type explicit instructions without speaking aloud |
 | **HUD State Badge** | Telemetry | Visual feedback: `LISTENING` (Green), `THINKING` (Cyan), `SPEAKING` (Blue), `MUTED` (Red) |
 
 ---
